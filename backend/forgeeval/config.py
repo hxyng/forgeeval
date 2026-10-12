@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     db_name: str = "forgeeval"
     db_username: str | None = None
     db_password: str | None = None
+    # Preferred in ECS: read credentials from the RDS-managed secret at connect time so password
+    # rotation never strands a running task (see forgeeval/db/credentials.py).
+    db_secret_arn: str | None = None
     redis_url: str = "redis://localhost:6379/0"
     queue_stream: str = "forgeeval:eval-jobs"
 
@@ -44,10 +47,17 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _database_url_from_parts(self) -> "Settings":
         if self.db_host:
-            if not (self.db_username and self.db_password):
-                raise ValueError("DB_HOST is set, so DB_USERNAME and DB_PASSWORD are required")
-            user, password = quote(self.db_username, safe=""), quote(self.db_password, safe="")
-            self.database_url = f"postgresql+psycopg://{user}:{password}@{self.db_host}:{self.db_port}/{self.db_name}"
+            where = f"{self.db_host}:{self.db_port}/{self.db_name}"
+            if self.db_secret_arn:
+                # user and password are supplied per connection from the secret
+                self.database_url = f"postgresql+psycopg://{where}"
+            elif self.db_username and self.db_password:
+                user, password = quote(self.db_username, safe=""), quote(self.db_password, safe="")
+                self.database_url = f"postgresql+psycopg://{user}:{password}@{where}"
+            else:
+                raise ValueError(
+                    "DB_HOST is set, so DB_SECRET_ARN or DB_USERNAME and DB_PASSWORD are required"
+                )
         return self
 
 

@@ -14,6 +14,7 @@ from forgeeval.config import get_settings
 
 if TYPE_CHECKING:
     from mypy_boto3_s3 import S3Client
+    from mypy_boto3_secretsmanager import SecretsManagerClient
     from mypy_boto3_sqs import SQSClient
 
 
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
 def client(service: Literal["sqs"]) -> "SQSClient": ...
 @overload
 def client(service: Literal["s3"]) -> "S3Client": ...
+@overload
+def client(service: Literal["secretsmanager"]) -> "SecretsManagerClient": ...
 def client(service: str) -> Any:
     return _client(service)
 
