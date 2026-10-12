@@ -111,6 +111,15 @@ described in Terraform under [`infra/`](infra/README.md): architecture, bootstra
 set the model API key, a monthly cost estimate and teardown. The checks (`fmt`, `validate`, `tflint`,
 Trivy, `terraform test` with a mocked provider) run without an AWS account.
 
+- `.github/workflows/infra.yml` runs those checks on every pull request that touches `infra/`, plus a
+  read-only `terraform plan` once the repository variable `AWS_PLAN_ROLE_ARN` is set.
+- `.github/workflows/deploy.yml` builds and pushes both images, runs the migration task, rolls the ECS
+  services and smoke-tests `/readyz`. It authenticates with GitHub OIDC and skips itself until the
+  repository variable `AWS_DEPLOY_ROLE_ARN` is set.
+
+First-time setup, routine deploys, rollback, failed migrations and dead-letter messages are in
+[`docs/runbooks/deploy-and-rollback.md`](docs/runbooks/deploy-and-rollback.md).
+
 ## Layout
 
 | Path | What lives there |

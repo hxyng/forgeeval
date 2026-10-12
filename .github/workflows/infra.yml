@@ -1,0 +1,124 @@
+name: infra
+
+# Checks the Terraform on every pull request that touches it. Everything except `plan` runs
+# without an AWS account; `plan` runs only once the repository variable AWS_PLAN_ROLE_ARN is set.
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.16.4"
+  TFLINT_VERSION: "v0.64.0"
+  TRIVY_IMAGE: "aquasec/trivy:0.74.0"
+
+jobs:
+  terraform:
+    name: fmt, validate, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff infra
+      - name: validate and test the roots
+        run: |
+          for dir in infra/envs/prod infra/bootstrap; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+            terraform -chdir="$dir" test
+            echo "::endgroup::"
+          done
+      - name: test the modules
+        run: |
+          for module in network data alb compute observability; do
+            echo "::group::modules/$module"
+            terraform -chdir="infra/modules/$module" init -backend=false -input=false
+            terraform -chdir="infra/modules/$module" test
+            echo "::endgroup::"
+          done
+
+  tflint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ hashFiles('infra/.tflint.hcl') }}
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+      - name: tflint
+        working-directory: infra
+        env:
+          # Lets tflint --init download the AWS ruleset without hitting anonymous rate limits.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init
+          tflint --recursive
+
+  trivy:
+    name: trivy config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: trivy config (HIGH and CRITICAL fail the build)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w "$TRIVY_IMAGE" config \
+            --skip-version-check \
+            --skip-dirs '**/.terraform' \
+            --ignorefile infra/.trivyignore.yaml \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            infra
+
+  plan:
+    name: plan (needs AWS_PLAN_ROLE_ARN)
+    # Skipped, not failed, until an AWS account is connected. Set the variables at repository level.
+    if: vars.AWS_PLAN_ROLE_ARN != ''
+    needs: [terraform, tflint, trivy]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: terraform plan (read-only role, no state lock)
+        working-directory: infra/envs/prod
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="region=${AWS_REGION}"
+          terraform plan -input=false -lock=false -no-color | tee plan.txt
+          {
+            echo '### terraform plan'
+            echo '```'
+            tail -n 40 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
