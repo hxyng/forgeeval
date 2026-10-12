@@ -7,6 +7,7 @@ drills: set prompt params ``fail_rate`` (0-1) or ``permanent_fail: true`` to inj
 
 import json
 import random
+import re
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -40,16 +41,29 @@ class ModelClient(Protocol):
     ) -> Generation: ...
 
 
-class _Missing(dict[str, Any]):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
+_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def render(template: str, item_input: Any) -> str:
-    """Fill ``{field}`` placeholders from a dict input; ``{input}`` is the whole input as JSON."""
+    """Fill ``{field}`` placeholders from a dict input; ``{input}`` is the whole input as JSON.
+
+    Only ``{identifier}`` is substituted. Every other brace is left alone, so templates can
+    contain JSON examples like ``{"label": "billing"}`` without escaping. Unknown placeholders
+    are kept verbatim; dict and list values are inserted as JSON.
+    """
     values: dict[str, Any] = dict(item_input) if isinstance(item_input, dict) else {}
-    values.setdefault("input", json.dumps(item_input, sort_keys=True, default=str))
-    return template.format_map(_Missing(values))
+    values.setdefault("input", item_input)
+
+    def fill(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in values:
+            return match.group(0)
+        value = values[key]
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, sort_keys=True, default=str)
+
+    return _PLACEHOLDER.sub(fill, template)
 
 
 class FakeModels:

@@ -20,6 +20,16 @@ from forgeeval.models_client import (
 def test_render_fills_fields_and_keeps_unknown_placeholders() -> None:
     assert render("Q: {q} / {missing}", {"q": "hi"}) == "Q: hi / {missing}"
     assert render("Raw: {input}", ["a", 1]) == 'Raw: ["a", 1]'
+    assert render("Ctx: {ctx} n={n}", {"ctx": {"b": 1}, "n": 3}) == 'Ctx: {"b": 1} n=3'
+
+
+def test_render_leaves_json_examples_in_templates_alone() -> None:
+    template = 'Reply as JSON like {"label": "billing"} or {"label": "bug"}. Ticket: {q}'
+    out = render(template, {"q": "refund please"})
+    assert (
+        out == 'Reply as JSON like {"label": "billing"} or {"label": "bug"}. Ticket: refund please'
+    )
+    assert render("{ {q} }", {"q": "x"}) == "{ x }"
 
 
 def openai(handler: Any, strip: bool = False) -> OpenAICompatible:
