@@ -1,16 +1,26 @@
+output "db_engine" {
+  description = "Database engine in use (rds or aurora-serverless)."
+  value       = var.database_engine
+}
+
 output "db_identifier" {
-  description = "RDS instance identifier."
-  value       = aws_db_instance.this.identifier
+  description = "DB instance identifier (RDS instance, or the Aurora cluster's instance); the CloudWatch DBInstanceIdentifier dimension."
+  value       = one(concat(aws_db_instance.this[*].identifier, aws_rds_cluster_instance.aurora[*].identifier))
+}
+
+output "db_cluster_identifier" {
+  description = "Aurora cluster identifier (CloudWatch DBClusterIdentifier dimension); null with the rds engine."
+  value       = one(aws_rds_cluster.aurora[*].cluster_identifier)
 }
 
 output "db_host" {
-  description = "Database hostname."
-  value       = aws_db_instance.this.address
+  description = "Database hostname (the Aurora cluster writer endpoint with aurora-serverless)."
+  value       = one(concat(aws_db_instance.this[*].address, aws_rds_cluster.aurora[*].endpoint))
 }
 
 output "db_port" {
   description = "Database port."
-  value       = aws_db_instance.this.port
+  value       = one(concat(aws_db_instance.this[*].port, aws_rds_cluster.aurora[*].port))
 }
 
 output "db_name" {
@@ -19,8 +29,8 @@ output "db_name" {
 }
 
 output "db_master_secret_arn" {
-  description = "ARN of the RDS-managed master secret (JSON keys username and password)."
-  value       = aws_db_instance.this.master_user_secret[0].secret_arn
+  description = "ARN of the Database-managed master secret (JSON keys username and password)."
+  value       = one(concat(aws_db_instance.this[*].master_user_secret[0].secret_arn, aws_rds_cluster.aurora[*].master_user_secret[0].secret_arn))
 }
 
 output "queue_url" {

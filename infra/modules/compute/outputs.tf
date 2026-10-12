@@ -9,18 +9,18 @@ output "cluster_arn" {
 }
 
 output "api_service_name" {
-  description = "Name of the API service."
-  value       = aws_ecs_service.api.name
+  description = "Name of the API service (null while asleep)."
+  value       = one(aws_ecs_service.api[*].name)
 }
 
 output "worker_service_name" {
-  description = "Name of the worker service."
-  value       = aws_ecs_service.worker.name
+  description = "Name of the worker service (null while asleep)."
+  value       = one(aws_ecs_service.worker[*].name)
 }
 
 output "web_service_name" {
-  description = "Name of the web service."
-  value       = aws_ecs_service.web.name
+  description = "Name of the web service (null while asleep)."
+  value       = one(aws_ecs_service.web[*].name)
 }
 
 output "migrate_task_definition_family" {
@@ -35,12 +35,12 @@ output "ecr_repository_urls" {
 
 output "service_subnet_ids" {
   description = "Subnets the services were configured with."
-  value       = aws_ecs_service.api.network_configuration[0].subnets
+  value       = one(aws_ecs_service.api[*].network_configuration[0].subnets)
 }
 
 output "service_assign_public_ip" {
   description = "Whether the services assign public IPs."
-  value       = aws_ecs_service.api.network_configuration[0].assign_public_ip
+  value       = one(aws_ecs_service.api[*].network_configuration[0].assign_public_ip)
 }
 
 output "execution_role_arn" {
@@ -59,4 +59,25 @@ output "task_role_arns" {
 output "log_group_names" {
   description = "CloudWatch log groups by service."
   value       = { for k, g in aws_cloudwatch_log_group.service : k => g.name }
+}
+
+output "task_definition_fingerprints" {
+  description = "SHA-256 of each task definition's content (container definitions, size, roles). Identical awake and asleep: demo mode never touches them."
+  value = {
+    for k, t in aws_ecs_task_definition.this :
+    k => sha256(join("|", [t.container_definitions, t.cpu, t.memory, t.execution_role_arn, coalesce(t.task_role_arn, "none")]))
+  }
+}
+
+output "service_latest_task_definition_arns" {
+  description = "Task definition each service is created from: the latest ACTIVE revision of its family (empty while asleep)."
+  value       = { for k, d in data.aws_ecs_task_definition.latest : k => d.arn }
+}
+
+output "service_health_check_grace_periods" {
+  description = "Load balancer health check grace period of the api and web services (empty while asleep)."
+  value = merge(
+    { for s in aws_ecs_service.api : "api" => s.health_check_grace_period_seconds },
+    { for s in aws_ecs_service.web : "web" => s.health_check_grace_period_seconds },
+  )
 }

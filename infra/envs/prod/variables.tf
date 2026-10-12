@@ -110,3 +110,32 @@ variable "image_tag" {
   type        = string
   default     = "bootstrap"
 }
+
+variable "active" {
+  description = "Demo mode switch. true: the full environment. false: asleep - no load balancer, listeners, target groups, ECS services or their autoscaling or alarms; the VPC, cluster, task definitions, ECR, queues, bucket, secrets, IAM, logs and database persist. See infra/scripts/demo.sh."
+  type        = bool
+  default     = true
+}
+
+variable "database_engine" {
+  description = "rds: PostgreSQL 16 on a db.t4g.micro RDS instance. aurora-serverless: Aurora PostgreSQL 16 Serverless v2 that scales to 0 ACU and pauses when idle (cheapest while asleep). Changing it replaces the database."
+  type        = string
+  default     = "rds"
+
+  validation {
+    condition     = contains(["rds", "aurora-serverless"], var.database_engine)
+    error_message = "database_engine must be \"rds\" or \"aurora-serverless\"."
+  }
+}
+
+variable "aurora_max_acu" {
+  description = "Aurora Serverless v2 maximum capacity in ACUs (aurora-serverless only)."
+  type        = number
+  default     = 2
+}
+
+variable "aurora_auto_pause_seconds" {
+  description = "Idle seconds before Aurora pauses to 0 ACU, 300 to 86400 (aurora-serverless only)."
+  type        = number
+  default     = 300
+}

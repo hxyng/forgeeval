@@ -1,6 +1,9 @@
 locals {
   services = toset(["api", "worker", "web", "migrate"])
 
+  # Long-running services that exist only while the environment is awake (demo mode).
+  running_services = var.services_enabled ? toset(["api", "worker", "web"]) : toset([])
+
   backend_image = "${aws_ecr_repository.this["backend"].repository_url}:${var.image_tag}"
   web_image     = "${aws_ecr_repository.this["web"].repository_url}:${var.image_tag}"
 
@@ -129,8 +132,9 @@ locals {
           image        = local.web_image
           essential    = true
           portMappings = [{ containerPort = var.web_port, protocol = "tcp" }]
-          # Fallback proxy target only: the ALB already routes /v1/* to the API.
-          environment = [{ name = "API_UPSTREAM", value = "http://${var.alb_dns_name}" }]
+          # Fallback proxy target only: the ALB already routes /v1/* to the API, so it must not depend on
+          # the ALB (whose DNS name changes whenever demo mode recreates it).
+          environment = [{ name = "API_UPSTREAM", value = var.api_upstream }]
           secrets     = []
           stopTimeout = 30
         },
@@ -226,19 +230,65 @@ resource "aws_ecs_task_definition" "this" {
 # Services
 # ---------------------------------------------------------------------------------------------
 
+# The services (and everything that needs a load balancer) exist only while var.services_enabled.
+# Task definitions, the cluster, queues and the database persist while the environment sleeps.
+moved {
+  from = terraform_data.alb_ready
+  to   = terraform_data.alb_ready[0]
+}
+
+moved {
+  from = aws_ecs_service.api
+  to   = aws_ecs_service.api[0]
+}
+
+moved {
+  from = aws_ecs_service.web
+  to   = aws_ecs_service.web[0]
+}
+
+moved {
+  from = aws_ecs_service.worker
+  to   = aws_ecs_service.worker[0]
+}
+
+moved {
+  from = aws_appautoscaling_target.worker
+  to   = aws_appautoscaling_target.worker[0]
+}
+
+moved {
+  from = aws_appautoscaling_policy.worker_backlog
+  to   = aws_appautoscaling_policy.worker_backlog[0]
+}
+
+# A service that is (re)created starts from the newest ACTIVE revision of its family, i.e. the
+# image the last deploy rolled out, not the "bootstrap" revision Terraform registered. Querying by
+# family name alone returns the latest ACTIVE revision. Services created earlier ignore it
+# (ignore_changes below), so this only matters on creation.
+data "aws_ecs_task_definition" "latest" {
+  for_each = local.running_services
+
+  task_definition = aws_ecs_task_definition.this[each.key].family
+}
+
 # Target groups must be attached to a listener before a service can register with them.
 resource "terraform_data" "alb_ready" {
+  count = var.services_enabled ? 1 : 0
+
   input = var.alb_listener_arns
 }
 
 resource "aws_ecs_service" "api" {
+  count = var.services_enabled ? 1 : 0
+
   name                               = "${var.name_prefix}-api"
   cluster                            = aws_ecs_cluster.this.id
-  task_definition                    = aws_ecs_task_definition.this["api"].arn
+  task_definition                    = data.aws_ecs_task_definition.latest["api"].arn
   desired_count                      = var.api_desired_count
   launch_type                        = "FARGATE"
   enable_execute_command             = var.enable_ecs_exec
-  health_check_grace_period_seconds  = 90
+  health_check_grace_period_seconds  = var.api_health_check_grace_period_seconds
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
   propagate_tags                     = "SERVICE"
@@ -268,13 +318,15 @@ resource "aws_ecs_service" "api" {
 }
 
 resource "aws_ecs_service" "web" {
+  count = var.services_enabled ? 1 : 0
+
   name                               = "${var.name_prefix}-web"
   cluster                            = aws_ecs_cluster.this.id
-  task_definition                    = aws_ecs_task_definition.this["web"].arn
+  task_definition                    = data.aws_ecs_task_definition.latest["web"].arn
   desired_count                      = var.web_desired_count
   launch_type                        = "FARGATE"
   enable_execute_command             = var.enable_ecs_exec
-  health_check_grace_period_seconds  = 60
+  health_check_grace_period_seconds  = var.web_health_check_grace_period_seconds
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
   propagate_tags                     = "SERVICE"
@@ -304,9 +356,11 @@ resource "aws_ecs_service" "web" {
 }
 
 resource "aws_ecs_service" "worker" {
+  count = var.services_enabled ? 1 : 0
+
   name                               = "${var.name_prefix}-worker"
   cluster                            = aws_ecs_cluster.this.id
-  task_definition                    = aws_ecs_task_definition.this["worker"].arn
+  task_definition                    = data.aws_ecs_task_definition.latest["worker"].arn
   desired_count                      = var.worker_min
   launch_type                        = "FARGATE"
   enable_execute_command             = var.enable_ecs_exec
@@ -336,19 +390,23 @@ resource "aws_ecs_service" "worker" {
 # ---------------------------------------------------------------------------------------------
 
 resource "aws_appautoscaling_target" "worker" {
+  count = var.services_enabled ? 1 : 0
+
   service_namespace  = "ecs"
   scalable_dimension = "ecs:service:DesiredCount"
-  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.worker.name}"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.worker[0].name}"
   min_capacity       = var.worker_min
   max_capacity       = var.worker_max
 }
 
 resource "aws_appautoscaling_policy" "worker_backlog" {
+  count = var.services_enabled ? 1 : 0
+
   name               = "${var.name_prefix}-worker-backlog"
   policy_type        = "TargetTrackingScaling"
-  service_namespace  = aws_appautoscaling_target.worker.service_namespace
-  scalable_dimension = aws_appautoscaling_target.worker.scalable_dimension
-  resource_id        = aws_appautoscaling_target.worker.resource_id
+  service_namespace  = aws_appautoscaling_target.worker[0].service_namespace
+  scalable_dimension = aws_appautoscaling_target.worker[0].scalable_dimension
+  resource_id        = aws_appautoscaling_target.worker[0].resource_id
 
   target_tracking_scaling_policy_configuration {
     target_value       = var.worker_backlog_per_task
@@ -400,7 +458,7 @@ resource "aws_appautoscaling_policy" "worker_backlog" {
 
             dimensions {
               name  = "ServiceName"
-              value = aws_ecs_service.worker.name
+              value = aws_ecs_service.worker[0].name
             }
           }
         }

@@ -14,6 +14,14 @@ mock_provider "aws" {
   mock_resource "aws_ecs_task_definition" {
     defaults = { arn = "arn:aws:ecs:us-east-1:123456789012:task-definition/mock:1" }
   }
+
+  # The newest ACTIVE revision of a family: a deploy has registered revision 42 since Terraform's own.
+  mock_data "aws_ecs_task_definition" {
+    defaults = {
+      arn      = "arn:aws:ecs:us-east-1:123456789012:task-definition/t-deployed:42"
+      revision = 42
+    }
+  }
 }
 
 override_resource {
@@ -40,7 +48,7 @@ variables {
   tasks_security_group_id   = "sg-tasks"
   api_target_group_arn      = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/t-api/1111111111111111"
   web_target_group_arn      = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/t-web/2222222222222222"
-  alb_dns_name              = "t-alb-1.us-east-1.elb.amazonaws.com"
+  api_upstream              = "http://127.0.0.1:8000"
   alb_listener_arns         = ["arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/t-alb/1/2"]
   queue_url                 = "https://sqs.us-east-1.amazonaws.com/123456789012/t-eval-jobs"
   queue_arn                 = "arn:aws:sqs:us-east-1:123456789012:t-eval-jobs"
@@ -57,14 +65,14 @@ variables {
 run "services_roll_back_automatically_and_exec_is_off" {
   assert {
     condition = alltrue([
-      for s in [aws_ecs_service.api, aws_ecs_service.web, aws_ecs_service.worker] :
+      for s in [aws_ecs_service.api[0], aws_ecs_service.web[0], aws_ecs_service.worker[0]] :
       one(s.deployment_circuit_breaker).enable == true && one(s.deployment_circuit_breaker).rollback == true && s.enable_execute_command == false
     ])
     error_message = "Every service needs the circuit breaker with rollback and ECS Exec off."
   }
 
   assert {
-    condition     = aws_ecs_service.api.desired_count == 2 && aws_ecs_service.web.desired_count == 1 && aws_ecs_service.worker.desired_count == 1
+    condition     = aws_ecs_service.api[0].desired_count == 2 && aws_ecs_service.web[0].desired_count == 1 && aws_ecs_service.worker[0].desired_count == 1
     error_message = "Defaults: api 2, web 1, worker 1."
   }
 
@@ -74,17 +82,17 @@ run "services_roll_back_automatically_and_exec_is_off" {
   }
 
   assert {
-    condition     = one(aws_ecs_service.api.load_balancer).container_port == 8000 && one(aws_ecs_service.web.load_balancer).container_port == 80 && length(aws_ecs_service.worker.load_balancer) == 0
+    condition     = one(aws_ecs_service.api[0].load_balancer).container_port == 8000 && one(aws_ecs_service.web[0].load_balancer).container_port == 80 && length(aws_ecs_service.worker[0].load_balancer) == 0
     error_message = "api and web register with the ALB; the worker has no port."
   }
 
   assert {
-    condition     = aws_appautoscaling_target.worker.min_capacity == 1 && aws_appautoscaling_target.worker.max_capacity == 5
+    condition     = aws_appautoscaling_target.worker[0].min_capacity == 1 && aws_appautoscaling_target.worker[0].max_capacity == 5
     error_message = "Worker scales between 1 and worker_max."
   }
 
   assert {
-    condition     = aws_appautoscaling_policy.worker_backlog.policy_type == "TargetTrackingScaling"
+    condition     = aws_appautoscaling_policy.worker_backlog[0].policy_type == "TargetTrackingScaling"
     error_message = "Worker scaling is target tracking on queue backlog."
   }
 }
@@ -96,7 +104,7 @@ run "tasks_follow_the_network_module_output" {
   }
 
   assert {
-    condition     = alltrue([for s in [aws_ecs_service.api, aws_ecs_service.web, aws_ecs_service.worker] : one(s.network_configuration).security_groups == toset(["sg-tasks"])])
+    condition     = alltrue([for s in [aws_ecs_service.api[0], aws_ecs_service.web[0], aws_ecs_service.worker[0]] : one(s.network_configuration).security_groups == toset(["sg-tasks"])])
     error_message = "All services share the tasks security group."
   }
 }
@@ -130,8 +138,8 @@ run "task_definitions_follow_the_app_contract" {
   }
 
   assert {
-    condition     = one([for e in jsondecode(aws_ecs_task_definition.this["web"].container_definitions)[0].environment : e.value if e.name == "API_UPSTREAM"]) == "http://t-alb-1.us-east-1.elb.amazonaws.com"
-    error_message = "API_UPSTREAM points at the ALB DNS name over http."
+    condition     = one([for e in jsondecode(aws_ecs_task_definition.this["web"].container_definitions)[0].environment : e.value if e.name == "API_UPSTREAM"]) == "http://127.0.0.1:8000"
+    error_message = "API_UPSTREAM is the static fallback (it must not reference the ALB)."
   }
 
   assert {
@@ -241,7 +249,7 @@ run "ecs_exec_is_opt_in" {
   }
 
   assert {
-    condition     = aws_ecs_service.api.enable_execute_command == true && contains([for s in jsondecode(aws_iam_role_policy.api_task.policy).Statement : s.Sid], "EcsExecChannel")
+    condition     = aws_ecs_service.api[0].enable_execute_command == true && contains([for s in jsondecode(aws_iam_role_policy.api_task.policy).Statement : s.Sid], "EcsExecChannel")
     error_message = "enable_ecs_exec turns on both the flag and the permissions."
   }
 }
@@ -276,5 +284,83 @@ run "model_base_url_is_plain_env_when_set" {
   assert {
     condition     = one([for e in jsondecode(aws_ecs_task_definition.this["worker"].container_definitions)[0].environment : e.value if e.name == "MODEL_BASE_URL"]) == "https://models.example.com/v1"
     error_message = "MODEL_BASE_URL is passed through as a plain variable."
+  }
+}
+
+run "recreated_services_start_from_the_latest_deployed_revision" {
+  assert {
+    condition     = alltrue([for k in ["api", "web", "worker"] : data.aws_ecs_task_definition.latest[k].task_definition == "t-${k}"])
+    error_message = "The lookup is by family name only, which returns the newest ACTIVE revision."
+  }
+
+  assert {
+    condition     = alltrue([for s in [aws_ecs_service.api[0], aws_ecs_service.web[0], aws_ecs_service.worker[0]] : s.task_definition == "arn:aws:ecs:us-east-1:123456789012:task-definition/t-deployed:42"])
+    error_message = "Services take their task definition from the latest-revision lookup, not Terraform's bootstrap revision."
+  }
+}
+
+run "health_check_grace_periods_are_configurable" {
+  variables {
+    api_health_check_grace_period_seconds = 180
+    web_health_check_grace_period_seconds = 120
+  }
+
+  assert {
+    condition     = aws_ecs_service.api[0].health_check_grace_period_seconds == 180 && aws_ecs_service.web[0].health_check_grace_period_seconds == 120
+    error_message = "Grace periods are wired through."
+  }
+}
+
+run "default_grace_periods_are_unchanged" {
+  assert {
+    condition     = aws_ecs_service.api[0].health_check_grace_period_seconds == 90 && aws_ecs_service.web[0].health_check_grace_period_seconds == 60
+    error_message = "Defaults: api 90 s, web 60 s."
+  }
+}
+
+run "asleep_has_no_services_or_scaling_but_keeps_cluster_and_task_definitions" {
+  variables {
+    services_enabled     = false
+    api_target_group_arn = null
+    web_target_group_arn = null
+    alb_listener_arns    = []
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.api) == 0 && length(aws_ecs_service.web) == 0 && length(aws_ecs_service.worker) == 0
+    error_message = "No services while asleep."
+  }
+
+  assert {
+    condition     = length(aws_appautoscaling_target.worker) == 0 && length(aws_appautoscaling_policy.worker_backlog) == 0 && length(terraform_data.alb_ready) == 0 && length(data.aws_ecs_task_definition.latest) == 0
+    error_message = "No autoscaling, readiness gate or revision lookup while asleep."
+  }
+
+  assert {
+    condition     = toset(keys(aws_ecs_task_definition.this)) == toset(["api", "worker", "web", "migrate"]) && aws_ecs_cluster.this.name == "t" && length(aws_cloudwatch_log_group.service) == 4 && length(aws_ecr_repository.this) == 2
+    error_message = "Task definitions, cluster, log groups and ECR persist."
+  }
+
+  assert {
+    condition     = output.api_service_name == null && output.worker_service_name == null && output.web_service_name == null && output.service_subnet_ids == null && output.service_assign_public_ip == null
+    error_message = "Service outputs are null while asleep."
+  }
+}
+
+run "awake_reference" {
+  assert {
+    condition     = length(output.task_definition_fingerprints) == 4
+    error_message = "Reference fingerprints of the four task definitions while awake."
+  }
+}
+
+run "task_definitions_do_not_depend_on_services_enabled" {
+  variables {
+    services_enabled = false
+  }
+
+  assert {
+    condition     = output.task_definition_fingerprints == run.awake_reference.task_definition_fingerprints
+    error_message = "Task definition content is identical awake and asleep."
   }
 }

@@ -11,10 +11,11 @@ below run offline (mocked provider), and a `plan` runs in CI once an AWS account
 | `bootstrap/` | Run once, local state: remote-state bucket, GitHub OIDC provider, plan and deploy roles |
 | `envs/prod/` | The environment: composes the modules below, S3 backend with `use_lockfile` |
 | `modules/network` | VPC over 2 AZs, public and private subnets, optional NAT, security groups |
-| `modules/data` | RDS PostgreSQL 16, SQS `eval-jobs` and DLQ, S3 payload bucket, Secrets Manager |
+| `modules/data` | RDS PostgreSQL 16 or Aurora Serverless v2 (`database_engine`), SQS `eval-jobs` and DLQ, S3 payload bucket, Secrets Manager |
 | `modules/alb` | Internet-facing ALB, listeners, target groups, path rules |
 | `modules/compute` | ECR, ECS cluster, task definitions, services, worker autoscaling, IAM |
-| `modules/observability` | SNS topic (own KMS key) and the six alarms |
+| `modules/observability` | SNS topic (own KMS key) and the six alarms (four while asleep) |
+| `scripts/demo.sh` | Wake (`up`), sleep (`down`) and `status` for demo mode |
 | `local/` | Emulator config for local development (not Terraform) |
 
 ```
@@ -132,12 +133,128 @@ Levers: `enable_nat_gateway = true` adds about $33 (and removes the 4 task IPs, 
 +$18 plus data processing); `multi_az = true` roughly doubles the RDS lines; each extra worker task is
 about $10.6 plus $3.65 for its IP.
 
+## Demo mode: sleep at a few dollars a month, wake on demand
+
+Two switches in `envs/prod` make a low-traffic or demo environment cheap without weakening anything:
+
+- `active` (default `true`). `false` puts the environment to sleep: the ALB, its listeners, target
+  groups and listener rules, the three ECS services, the worker autoscaling and the two alarms that read
+  the ALB metrics are removed. Everything else stays: VPC and security groups, ECS cluster, task
+  definitions, ECR repositories and images, SQS queue and DLQ, S3 bucket, secrets, IAM, log groups, the
+  database and the queue and database alarms. Outputs that belong to removed resources
+  (`alb_dns_name`, the three `*_service_name`s) become `null`.
+- `database_engine` (default `"rds"`). `"aurora-serverless"` swaps the RDS instance for an Aurora
+  PostgreSQL 16 Serverless v2 cluster with one `db.serverless` instance that scales to 0 ACU and pauses
+  after `aurora_auto_pause_seconds` (default 300) without connections. **Changing the engine replaces
+  the database**: choose it before the first apply (or migrate the data yourself).
+
+```bash
+infra/scripts/demo.sh up       # terraform apply -var active=true, then wait for /readyz through the ALB
+infra/scripts/demo.sh down     # terraform apply -var active=false
+infra/scripts/demo.sh status   # awake or asleep, running tasks, estimated $/hour
+```
+
+Extra arguments go to `terraform apply` (`demo.sh up -var-file=/abs/prod.tfvars`); pass the same ones to
+`down`. The script needs terraform, the AWS CLI, curl and credentials; set `DEMO_AUTO_APPROVE=1` to skip
+the apply confirmation.
+
+### How `active = false` works, resource by resource
+
+| Resource | Asleep | How |
+| --- | --- | --- |
+| `module.alb` (ALB, 2 listeners, 2 target groups, listener rule) | removed | `count = var.active ? 1 : 0` on the module |
+| `aws_ecs_service` api, web, worker | removed | `count = var.services_enabled` |
+| `aws_appautoscaling_target` and `_policy` (worker) | removed | same `count` |
+| `terraform_data.alb_ready` (listener wait) | removed | same `count` |
+| Alarms `alb_5xx_rate`, `api_unhealthy_targets` | removed | `count = var.alb_enabled` in observability |
+| ECS cluster, 4 task definitions, ECR, log groups, IAM | kept | not parameterised by `active` |
+| Database, queues, bucket, secrets, queue and DB alarms | kept | the `data` module does not receive `active` |
+
+The tests assert that the persistent resources do not change between `active = true` and `false`
+(`persistent_state` output compared across runs, `task_definition_fingerprints` in the compute tests).
+Resources whose address gained a `[0]` carry `moved` blocks, so upgrading an existing environment plans
+no replacement of the ALB, services or RDS instance.
+
+Two consequences worth knowing. The web task's `API_UPSTREAM` fallback no longer points at the ALB DNS
+name: the name changes whenever the ALB is recreated, and keeping it would have made the task
+definition depend on `active`. The ALB already routes `/v1/*` to the API, so the fallback is never
+used in AWS; it now defaults to `http://127.0.0.1:8000` (`api_upstream`). And while asleep,
+`deploy.yml` skips with a notice instead of failing (there is no service to migrate or roll).
+
+### Services start from the latest deployed image
+
+Terraform registers the task definitions with the tag `bootstrap`, and `deploy.yml` registers a newer
+revision per commit while the services use `ignore_changes = [task_definition]`. A service created by
+waking up must not start from the `bootstrap` revision (it names an image tag that does not exist), so
+`modules/compute` looks each family up with
+
+```hcl
+data "aws_ecs_task_definition" "latest" {
+  for_each        = local.running_services
+  task_definition = aws_ecs_task_definition.this[each.key].family   # family only: newest ACTIVE revision
+}
+```
+
+and creates each service from `data.aws_ecs_task_definition.latest[...].arn`. ECS resolves a bare family
+name to its latest ACTIVE revision, which is whatever the last deploy registered (old revisions stay
+ACTIVE because of `skip_destroy`). A service that already exists ignores the value, so day-to-day
+applies are unchanged. If you change task-definition settings in Terraform, Terraform registers a new
+revision and the next wake-up picks up that revision (image tag `bootstrap`): run the deploy workflow
+after such a change and before sleeping, so the newest revision carries a real image.
+
+### Database cold start
+
+Aurora needs about 15 seconds to resume from 0 ACU (AWS documents "approximately 15 seconds"), and 30
+seconds or more if it was paused for over a day. The first request after a pause, and the first `up`,
+therefore wait for the database: `/readyz` fails its ALB health check until a connection works. With
+`database_engine = "aurora-serverless"` the services' `health_check_grace_period_seconds` is 180 for the
+API (90 with RDS) and 120 for web (60 with RDS), so ECS does not kill tasks that are only waiting for the
+database. The backend sets no connect timeout, so the connection simply waits. Aurora does not pause
+while any connection is open, and an RDS Proxy would also prevent pausing, so none is used.
+
+### Aurora settings
+
+| Setting | Value |
+| --- | --- |
+| Engine | `aurora-postgresql`, `aurora_engine_version` default `16.6`. Scaling to 0 ACU needs 16.3 or newer; a validation enforces it |
+| Capacity | `min_capacity = 0`, `max_capacity = aurora_max_acu` (default 2), `seconds_until_auto_pause = aurora_auto_pause_seconds` (default 300; AWS allows 300 to 86400) |
+| Instances | one `db.serverless` writer, not publicly accessible, private subnets, same security group |
+| Security | storage encrypted, `manage_master_user_password = true`, cluster parameter group with `rds.force_ssl = 1`, IAM database authentication on |
+| Backups | 7 days; `deletion_protection` and the final snapshot follow the existing variables |
+| Alarms | CPU on the instance, as for RDS. `ACUUtilization` (above 90% of the maximum for 10 minutes) replaces `FreeStorageSpace`, which does not apply because Aurora storage grows on its own. `ACUUtilization` reports 0 while paused, so the alarm stays quiet |
+
+### Cost
+
+Verified us-east-1 list prices: ALB $0.0225/h plus LCUs; public IPv4 $0.005/h per address; Fargate x86
+$0.04048 per vCPU-hour and $0.004445 per GB-hour; Aurora Serverless v2 $0.12 per ACU-hour and storage
+$0.10/GB-month. **Unverified:** RDS db.t4g.micro $0.016/h and RDS gp3 $0.115/GB-month. The always-on
+items (about $3.20/month) are estimates, not verified prices: 3 secrets $1.20, alarm KMS key $1.00,
+about 4 alarms $0.40, ECR/S3/SQS/logs allowance $0.60.
+
+| | RDS (`rds`) | Aurora Serverless v2 |
+| --- | ---: | ---: |
+| Awake, ALB + 2 IPv4 | $0.0325/h | $0.0325/h |
+| Awake, 4 task IPv4 (no NAT) | $0.020/h | $0.020/h |
+| Awake, Fargate (2 api, 1 worker, 1 web) | $0.0560/h | $0.0560/h |
+| Awake, database | $0.016/h | $0.12/h at an assumed 1 ACU ($0.06 at 0.5, $0.24 at the 2 ACU maximum) |
+| **Awake total per hour** | **about $0.125** | **about $0.229** (up to $0.349 at 2 ACU) |
+| Asleep, database | $11.68 + $2.30 storage per month (the instance cannot pause) | about $0.20 per month (storage, about 2 GB) |
+| Asleep, always-on items | about $3.20 per month | about $3.20 per month |
+| **Asleep total per month** | **about $17** | **about $3.40** |
+
+Asleep with Aurora is the $2 to 5 per month case. With RDS it is about $17, still saving about $90 of
+the $107 awake month. A four-hour demo costs about $0.50 (RDS) or $0.92 (Aurora) on top of the asleep
+price; Aurora keeps billing for 5 minutes after the last connection before it pauses. With
+`enable_nat_gateway = true` the NAT gateway ($0.045/h plus its public IPv4, about $33/month) is not
+removed by `active = false`: use demo mode with the default `false`.
+
 ## Operational notes
 
 - **Task definitions**: Terraform creates them with the placeholder tag `bootstrap`, and the services
   ignore later task-definition changes. `.github/workflows/deploy.yml` registers a revision per commit.
   After changing task-definition settings in Terraform (environment, secrets, sizes), run the deploy
   workflow to roll the change out. Old revisions are kept (`skip_destroy`) so rollback stays possible.
+  Services created by demo-mode wake-up start from the latest ACTIVE revision (see Demo mode).
 - **Database credentials rotate** (RDS-managed master secret, every 7 days by default), and ECS
   injects secrets only when a task starts. So the long-running api and worker tasks don't get the
   password injected: they receive `DB_SECRET_ARN` and read the secret for each new connection

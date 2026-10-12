@@ -1,6 +1,6 @@
 output "alb_dns_name" {
-  description = "Public DNS name of the load balancer (the application URL until a domain is attached)."
-  value       = module.alb.dns_name
+  description = "Public DNS name of the load balancer (the application URL until a domain is attached). Null while the environment sleeps (active = false)."
+  value       = one(module.alb[*].dns_name)
 }
 
 output "ecr_repository_urls" {
@@ -61,4 +61,28 @@ output "db_master_secret_arn" {
 output "alarm_topic_arn" {
   description = "SNS topic receiving alarms."
   value       = module.observability.alarm_topic_arn
+}
+
+output "active" {
+  description = "Whether the environment is awake (load balancer and services exist)."
+  value       = var.active
+}
+
+output "database_engine" {
+  description = "Database engine in use (rds or aurora-serverless)."
+  value       = var.database_engine
+}
+
+output "persistent_state" {
+  description = "Identifying attributes of everything that survives sleep (task definitions, cluster, database, queues, bucket, secrets, ECR, roles). Must be identical for active = true and false; the tests assert it."
+  value = {
+    task_definitions = module.compute.task_definition_fingerprints
+    cluster_arn      = module.compute.cluster_arn
+    database         = [module.data.db_engine, module.data.db_identifier, module.data.db_host, module.data.db_port, module.data.db_name, module.data.db_master_secret_arn]
+    queues           = [module.data.queue_url, module.data.queue_arn, module.data.dlq_arn]
+    bucket           = module.data.bucket_arn
+    secrets          = [module.data.api_key_pepper_secret_arn, module.data.model_api_key_secret_arn]
+    ecr              = module.compute.ecr_repository_urls
+    roles            = [module.compute.execution_role_arn, module.compute.task_role_arns]
+  }
 }

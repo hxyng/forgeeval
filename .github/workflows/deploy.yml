@@ -45,11 +45,29 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # Demo mode (infra/README.md): while the environment sleeps there are no ECS services, so there
+      # is nothing to migrate or roll. Skip instead of failing; the wake-up recreates the services
+      # from the last deployed revision, which still matches the database schema. Deploy again after waking.
+      - name: Check that the environment is awake
+        id: awake
+        run: |
+          set -euo pipefail
+          count=$(aws ecs describe-services --cluster "$NAME_PREFIX" --services "${NAME_PREFIX}-api" \
+            --query "length(services[?status=='ACTIVE'])" --output text)
+          if [ "$count" = "0" ]; then
+            echo "::notice::The environment is asleep (no api service). Skipping the deploy; wake it with infra/scripts/demo.sh up, then run this workflow again."
+            echo "awake=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "awake=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Log in to ECR
         id: ecr
+        if: steps.awake.outputs.awake == 'true'
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push images
+        if: steps.awake.outputs.awake == 'true'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
@@ -68,6 +86,7 @@ jobs:
           done
 
       - name: Register task definitions with the new images
+        if: steps.awake.outputs.awake == 'true'
         id: taskdefs
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
@@ -97,6 +116,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run database migrations (fails the deploy on a non-zero exit)
+        if: steps.awake.outputs.awake == 'true'
         env:
           MIGRATE_TASK_DEFINITION: ${{ steps.taskdefs.outputs.migrate }}
         run: |
@@ -131,6 +151,7 @@ jobs:
           fi
 
       - name: Update services and wait for them to settle
+        if: steps.awake.outputs.awake == 'true'
         env:
           API_TASK_DEFINITION: ${{ steps.taskdefs.outputs.api }}
           WORKER_TASK_DEFINITION: ${{ steps.taskdefs.outputs.worker }}
@@ -161,6 +182,7 @@ jobs:
           exit "$failed"
 
       - name: Smoke test through the load balancer
+        if: steps.awake.outputs.awake == 'true'
         env:
           APP_URL: ${{ vars.APP_URL }}
         run: |
