@@ -9,13 +9,16 @@ for SQS (cloud) a configuration change instead of a redesign.
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import redis
 from opentelemetry.trace import SpanKind
 
 from forgeeval.config import get_settings
 from forgeeval.telemetry import inject_headers, tracer
+
+if TYPE_CHECKING:
+    from mypy_boto3_sqs import SQSClient
 
 
 @dataclass(frozen=True)
@@ -132,15 +135,113 @@ class RedisStreamQueue:
         return Message(run_item_id, mid.decode(), deliveries, headers=decoded)
 
 
+class SqsQueue:
+    """Amazon SQS standard queue (ElasticMQ locally).
+
+    Semantics match RedisStreamQueue: a received message is hidden for the queue's visibility
+    timeout and reappears if not deleted (``ack``); SQS's redrive policy moves a message to the
+    dead-letter queue after ``maxReceiveCount`` receives (set in Terraform). Trace context rides
+    in message attributes. ``receive`` long-polls, so an idle worker costs one request per
+    ``wait_seconds`` rather than spinning.
+    """
+
+    MAX_BATCH = 10  # SQS limit for SendMessageBatch / ReceiveMessage
+
+    def __init__(self, client: "SQSClient", queue_url: str) -> None:
+        self._sqs = client
+        self.queue_url = queue_url
+
+    def enqueue(self, run_item_ids: Sequence[uuid.UUID]) -> None:
+        with tracer.start_as_current_span(
+            "eval-jobs publish",
+            kind=SpanKind.PRODUCER,
+            attributes={
+                "messaging.system": "aws_sqs",
+                "messaging.operation.type": "publish",
+                "messaging.destination.name": self.queue_url.rsplit("/", 1)[-1],
+                "messaging.batch.message_count": len(run_item_ids),
+            },
+        ):
+            attributes: dict[str, Any] = {
+                k: {"DataType": "String", "StringValue": v} for k, v in inject_headers().items()
+            }
+            ids = list(run_item_ids)
+            for start in range(0, len(ids), self.MAX_BATCH):
+                chunk = ids[start : start + self.MAX_BATCH]
+                resp = self._sqs.send_message_batch(
+                    QueueUrl=self.queue_url,
+                    Entries=[
+                        {
+                            "Id": str(i),
+                            "MessageBody": str(item_id),
+                            "MessageAttributes": attributes,
+                        }
+                        for i, item_id in enumerate(chunk)
+                    ],
+                )
+                if resp.get("Failed"):
+                    raise RuntimeError(
+                        f"SQS rejected {len(resp['Failed'])} messages: {resp['Failed']}"
+                    )
+
+    def receive(self, consumer: str, max_messages: int, wait_seconds: float) -> list[Message]:
+        resp = self._sqs.receive_message(
+            QueueUrl=self.queue_url,
+            MaxNumberOfMessages=max(1, min(max_messages, self.MAX_BATCH)),
+            WaitTimeSeconds=max(0, min(int(wait_seconds), 20)),
+            MessageAttributeNames=["All"],
+            MessageSystemAttributeNames=["ApproximateReceiveCount"],
+        )
+        out: list[Message] = []
+        for m in resp.get("Messages", []):
+            headers = {
+                k: v["StringValue"]
+                for k, v in m.get("MessageAttributes", {}).items()
+                if "StringValue" in v
+            }
+            out.append(
+                Message(
+                    run_item_id=uuid.UUID(m["Body"]),
+                    receipt=m["ReceiptHandle"],
+                    deliveries=int(m.get("Attributes", {}).get("ApproximateReceiveCount", "1")),
+                    headers=headers,
+                )
+            )
+        return out
+
+    def ack(self, message: Message) -> None:
+        self._sqs.delete_message(QueueUrl=self.queue_url, ReceiptHandle=message.receipt)
+
+    def depth(self) -> int:
+        attrs = self._sqs.get_queue_attributes(
+            QueueUrl=self.queue_url,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+            ],
+        )["Attributes"]
+        return int(attrs.get("ApproximateNumberOfMessages", 0)) + int(
+            attrs.get("ApproximateNumberOfMessagesNotVisible", 0)
+        )
+
+
 _queue: JobQueue | None = None
 
 
+def build_queue() -> JobQueue:
+    settings = get_settings()
+    if settings.queue_backend == "sqs":
+        if not settings.sqs_queue_url:
+            raise RuntimeError("QUEUE_BACKEND=sqs requires SQS_QUEUE_URL")
+        from forgeeval.aws import client
+
+        return SqsQueue(client("sqs"), settings.sqs_queue_url)
+    return RedisStreamQueue(redis.Redis.from_url(settings.redis_url), stream=settings.queue_stream)
+
+
 def get_queue() -> JobQueue:
-    """Process-wide queue from settings. FastAPI dependency; tests override it."""
+    """Process-wide queue from settings (QUEUE_BACKEND=redis|sqs). FastAPI dependency."""
     global _queue
     if _queue is None:
-        settings = get_settings()
-        _queue = RedisStreamQueue(
-            redis.Redis.from_url(settings.redis_url), stream=settings.queue_stream
-        )
+        _queue = build_queue()
     return _queue

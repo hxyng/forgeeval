@@ -26,6 +26,14 @@ jobs:
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-retries 30
+      elasticmq:
+        image: softwaremill/elasticmq-native:1.7.1
+        ports: ["9324:9324"]
+      s3mock:
+        image: adobe/s3mock:5.2.2
+        ports: ["9091:9090"]
+    env:
+      REQUIRE_AWS_EMULATORS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

@@ -20,6 +20,7 @@ dependencies = [
   "opentelemetry-instrumentation-sqlalchemy>=0.66b1",
   "opentelemetry-instrumentation-redis>=0.66b1",
   "opentelemetry-instrumentation-httpx>=0.66b1",
+  "boto3>=1.35",
 ]
 
 [dependency-groups]
@@ -28,6 +29,7 @@ dev = [
   "ruff>=0.8",
   "mypy>=1.13",
   "types-jsonschema>=4.26.0.20261006",
+  "boto3-stubs[s3,sqs]>=1.35",
 ]
 
 [build-system]

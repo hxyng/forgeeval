@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from forgeeval.api.traces import load_payload
 from forgeeval.auth import AuthContext, Scope, require
 from forgeeval.db.base import Base
 from forgeeval.db.models import (
@@ -31,6 +32,7 @@ from forgeeval.db.models import (
 )
 from forgeeval.db.session import get_session
 from forgeeval.evaluator_configs import dump_config, parse_config
+from forgeeval.storage import PayloadStore, get_store
 
 router = APIRouter(prefix="/v1", tags=["registry"])
 
@@ -279,7 +281,12 @@ def list_datasets(db: DbSession, ctx: Reader) -> list[DatasetOut]:
 
 @router.post("/datasets/{name}/versions", status_code=status.HTTP_201_CREATED)
 def create_dataset_version(
-    name: Name, body: DatasetVersionIn, db: DbSession, ctx: Writer, response: Response
+    name: Name,
+    body: DatasetVersionIn,
+    db: DbSession,
+    ctx: Writer,
+    response: Response,
+    store: Annotated[PayloadStore | None, Depends(get_store)],
 ) -> DatasetVersionOut:
     """Snapshot items into a new version. Items can be given inline or promoted from traces."""
     ds = _dataset(db, ctx, name)
@@ -301,10 +308,11 @@ def create_dataset_version(
             )
         for tid in wanted:
             t = found[tid]
+            payload = load_payload(t, store)
             rows.append(
                 {
-                    "input": t.input,
-                    "expected_output": t.output
+                    "input": payload["input"],
+                    "expected_output": payload["output"]
                     if body.from_traces.use_output_as_expected
                     else None,
                     "context": None,

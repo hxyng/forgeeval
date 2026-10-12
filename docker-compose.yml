@@ -5,6 +5,11 @@ x-backend-env: &backend-env
   REDIS_URL: redis://redis:6379/0
   API_KEY_PEPPER: local-dev-pepper-change-me
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  # Large trace payloads go to S3 (S3Mock locally; real S3 in AWS via the task role)
+  S3_BUCKET: forgeeval-payloads
+  S3_ENDPOINT_URL: http://s3mock:9090
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local
 
 services:
   postgres:
@@ -28,6 +33,12 @@ services:
       interval: 2s
       retries: 30
 
+  s3mock:
+    image: adobe/s3mock:5.2.2
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: forgeeval-payloads
+    ports: ["9091:9090"]  # 9090 is Prometheus
+
   migrate:
     build: ./backend
     command: ["alembic", "upgrade", "head"]
@@ -44,6 +55,7 @@ services:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       otel-collector: { condition: service_started }
+      s3mock: { condition: service_started }
 
   web:
     build: ./web
@@ -60,6 +72,7 @@ services:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       otel-collector: { condition: service_started }
+      s3mock: { condition: service_started }
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0

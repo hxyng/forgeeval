@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,8 +10,15 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://forgeeval:forgeeval@localhost:5433/forgeeval"
     redis_url: str = "redis://localhost:6379/0"
     queue_stream: str = "forgeeval:eval-jobs"
+
+    # AWS (ECS task role supplies credentials; AWS_ENDPOINT_URL targets local emulators)
+    queue_backend: Literal["redis", "sqs"] = "redis"
+    sqs_queue_url: str | None = None
+    aws_region: str = "us-east-1"
+    aws_endpoint_url: str | None = None
     s3_endpoint_url: str | None = None
-    s3_bucket: str = "forgeeval-local"
+    s3_bucket: str | None = None  # unset: trace payloads stay inline in Postgres
+    payload_offload_bytes: int = 64 * 1024
     api_key_pepper: str = "local-dev-pepper-change-me"
 
     # Model under test / LLM judge. Any OpenAI-compatible Chat Completions endpoint.
