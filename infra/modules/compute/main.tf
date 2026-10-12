@@ -11,7 +11,10 @@ locals {
     { name = "DB_NAME", value = var.db_name },
   ]
 
-  # ECS extracts single JSON keys of the RDS-managed secret ("<arn>:<key>::").
+  # The one-off migrate task gets credentials injected at start ("<arn>:<key>::"): it lives for
+  # seconds, so password rotation can't strand it. Long-running api/worker tasks instead read
+  # the secret per connection via DB_SECRET_ARN (backend/forgeeval/db/credentials.py), because
+  # RDS rotates the master password every 7 days and ECS injects secrets only at task start.
   db_secrets = [
     { name = "DB_USERNAME", valueFrom = "${var.db_master_secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${var.db_master_secret_arn}:password::" },
@@ -25,18 +28,16 @@ locals {
       { name = "AWS_REGION", value = var.region },
       { name = "S3_BUCKET", value = var.bucket_name },
       { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "http://localhost:4318" },
+      { name = "DB_SECRET_ARN", value = var.db_master_secret_arn },
     ],
     local.db_environment,
     var.model_base_url == null ? [] : [{ name = "MODEL_BASE_URL", value = var.model_base_url }],
   )
 
-  backend_secrets = concat(
-    local.db_secrets,
-    [
-      { name = "API_KEY_PEPPER", valueFrom = var.api_key_pepper_secret_arn },
-      { name = "MODEL_API_KEY", valueFrom = var.model_api_key_secret_arn },
-    ],
-  )
+  backend_secrets = [
+    { name = "API_KEY_PEPPER", valueFrom = var.api_key_pepper_secret_arn },
+    { name = "MODEL_API_KEY", valueFrom = var.model_api_key_secret_arn },
+  ]
 
   # Collector config: OTLP in, traces to X-Ray, metrics to CloudWatch as EMF log events.
   adot_config = yamlencode({

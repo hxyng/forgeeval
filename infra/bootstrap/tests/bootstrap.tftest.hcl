@@ -76,6 +76,16 @@ run "plan_role_trusts_pull_requests_and_is_read_only" {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.plan_state_read.policy).Statement : !contains(flatten([s.Action]), "s3:PutObject") && !contains(flatten([s.Action]), "s3:DeleteObject")])
     error_message = "The plan role must not write the state bucket."
   }
+
+  assert {
+    condition = alltrue([
+      contains([for st in jsondecode(aws_iam_role_policy.plan_deny_data_reads.policy).Statement : st.Effect], "Deny"),
+      contains(flatten([for st in jsondecode(aws_iam_role_policy.plan_deny_data_reads.policy).Statement : st.Action if st.Sid == "DenyObjectReadsOutsideState"]), "s3:GetObject"),
+      one([for st in jsondecode(aws_iam_role_policy.plan_deny_data_reads.policy).Statement : st.NotResource if st.Sid == "DenyObjectReadsOutsideState"]) == "${aws_s3_bucket.state.arn}/*",
+      alltrue([for a in ["secretsmanager:GetSecretValue", "sqs:ReceiveMessage", "logs:GetLogEvents"] : contains(flatten([for st in jsondecode(aws_iam_role_policy.plan_deny_data_reads.policy).Statement : st.Action if st.Sid == "DenyDataPlaneReads"]), a)]),
+    ])
+    error_message = "The plan role must not read customer data: S3 objects outside the state bucket, secret values, queue messages or log contents."
+  }
 }
 
 run "deploy_policy_is_scoped_to_the_deploy_workflow" {

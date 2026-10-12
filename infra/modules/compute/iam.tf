@@ -17,6 +17,14 @@ locals {
   shared_task_statements = concat(
     [
       {
+        # Database credentials are read per connection so RDS password rotation never strands a
+        # running task (see the comment on db_secrets in main.tf).
+        Sid      = "ReadDatabaseSecret"
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = var.db_master_secret_arn
+      },
+      {
         Sid      = "ReadWritePayloads"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]

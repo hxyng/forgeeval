@@ -154,12 +154,20 @@ run "task_definitions_follow_the_app_contract" {
   assert {
     condition = alltrue([
       for role in ["api", "worker"] :
-      one([for s in jsondecode(aws_ecs_task_definition.this[role].container_definitions)[0].secrets : s.valueFrom if s.name == "DB_USERNAME"]) == "${var.db_master_secret_arn}:username::" &&
-      one([for s in jsondecode(aws_ecs_task_definition.this[role].container_definitions)[0].secrets : s.valueFrom if s.name == "DB_PASSWORD"]) == "${var.db_master_secret_arn}:password::" &&
+      one([for e in jsondecode(aws_ecs_task_definition.this[role].container_definitions)[0].environment : e.value if e.name == "DB_SECRET_ARN"]) == var.db_master_secret_arn &&
+      !contains([for s in jsondecode(aws_ecs_task_definition.this[role].container_definitions)[0].secrets : s.name], "DB_PASSWORD") &&
+      contains([for st in jsondecode(role == "api" ? aws_iam_role_policy.api_task.policy : aws_iam_role_policy.worker_task.policy).Statement : st.Action if st.Sid == "ReadDatabaseSecret" && st.Resource == var.db_master_secret_arn], "secretsmanager:GetSecretValue") &&
       one([for s in jsondecode(aws_ecs_task_definition.this[role].container_definitions)[0].secrets : s.valueFrom if s.name == "API_KEY_PEPPER"]) == var.api_key_pepper_secret_arn &&
       one([for s in jsondecode(aws_ecs_task_definition.this[role].container_definitions)[0].secrets : s.valueFrom if s.name == "MODEL_API_KEY"]) == var.model_api_key_secret_arn
     ])
-    error_message = "Credentials are injected as ECS secrets, using the JSON keys of the RDS-managed secret."
+    error_message = "api/worker read DB credentials per connection (DB_SECRET_ARN + task-role GetSecretValue), so rotation can't strand them; other secrets are injected."
+  }
+
+  assert {
+    condition = (
+      one([for s in jsondecode(aws_ecs_task_definition.this["migrate"].container_definitions)[0].secrets : s.valueFrom if s.name == "DB_PASSWORD"]) == "${var.db_master_secret_arn}:password::"
+    )
+    error_message = "The short-lived migrate task gets DB credentials injected from the RDS-managed secret's JSON keys."
   }
 
   assert {

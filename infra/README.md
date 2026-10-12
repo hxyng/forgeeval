@@ -138,11 +138,13 @@ about $10.6 plus $3.65 for its IP.
   ignore later task-definition changes. `.github/workflows/deploy.yml` registers a revision per commit.
   After changing task-definition settings in Terraform (environment, secrets, sizes), run the deploy
   workflow to roll the change out. Old revisions are kept (`skip_destroy`) so rollback stays possible.
-- **Database credentials rotate**: the RDS-managed master secret rotates every 7 days by default, but
-  ECS injects secrets only when a task starts. Running tasks keep the old password in their environment,
-  so new database connections can fail after a rotation until the tasks are replaced. Until the
-  application re-reads credentials on authentication failure, redeploy at least weekly or extend the
-  rotation period in Secrets Manager. See the runbook.
+- **Database credentials rotate** (RDS-managed master secret, every 7 days by default), and ECS
+  injects secrets only when a task starts. So the long-running api and worker tasks don't get the
+  password injected: they receive `DB_SECRET_ARN` and read the secret for each new connection
+  (cached 5 minutes, re-read immediately if Postgres rejects the password; see
+  `backend/forgeeval/db/credentials.py`). Their task roles may `GetSecretValue` on that one secret.
+  The short-lived `migrate` task still gets credentials injected at start, which is safe for a task
+  that lives seconds.
 - **Worker scaling** uses a target-tracking metric-math expression (visible messages divided by running
   tasks, target 10); validate its behaviour under real load.
 - **ECS Exec** is off. `enable_ecs_exec = true` turns it on and adds the SSM permissions to the task roles.

@@ -169,6 +169,41 @@ resource "aws_iam_role_policy" "plan_state_read" {
   })
 }
 
+# ReadOnlyAccess also grants data-plane reads (every S3 object, SQS receive, log contents). A plan
+# needs only resource metadata and the state file, and any pull_request job can assume this role,
+# so deny reading customer data explicitly. An explicit Deny wins over the managed policy's Allow.
+resource "aws_iam_role_policy" "plan_deny_data_reads" {
+  name = "deny-data-reads"
+  role = aws_iam_role.plan.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid         = "DenyObjectReadsOutsideState"
+        Effect      = "Deny"
+        Action      = ["s3:GetObject", "s3:GetObjectVersion"]
+        NotResource = "${aws_s3_bucket.state.arn}/*"
+      },
+      {
+        Sid    = "DenyDataPlaneReads"
+        Effect = "Deny"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "sqs:ReceiveMessage",
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents",
+          "logs:StartQuery",
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
 resource "aws_iam_role" "deploy" {
   name                 = "${var.name_prefix}-github-deploy"
   description          = "Assumed by the production deploy workflow only"
