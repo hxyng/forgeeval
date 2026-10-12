@@ -186,7 +186,7 @@ def decide(
     if worsening <= threshold:
         return Verdict(
             GateVerdict.passed,
-            f"{label} {base:.4g} -> {observed:.4g}; worsened by {max(worsening, 0):.4g}, "
+            f"{label} {base:.4g} -> {observed:.4g}; worsened by {max(worsening, 0.0) + 0.0:.4g}, "
             f"allowed {threshold:g}",
             **common,
         )

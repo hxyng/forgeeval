@@ -233,3 +233,9 @@ def test_checking_requires_gates_scope(
     reader = make_client(["project:read"])
     assert reader.post("/v1/gates/accuracy/check", json={"run_id": run}).status_code == 403
     assert reader.get("/v1/gates/accuracy/checks").status_code == 200
+
+
+def test_unchanged_metric_reads_as_zero_not_negative_zero() -> None:
+    v = decide(DROP_MEAN, True, metrics(1.0), metrics(1.0), comparison(False))
+    assert v.verdict is GateVerdict.passed
+    assert "worsened by 0," in v.reason and "-0" not in v.reason
