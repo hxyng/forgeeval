@@ -6,12 +6,13 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from forgeeval.api import traces
+from forgeeval.api import registry, traces
 from forgeeval.auth import AuthContext, authenticate
 from forgeeval.db.session import get_session
 
 app = FastAPI(title="ForgeEval API", version="0.1.0")
 app.include_router(traces.router)
+app.include_router(registry.router)
 
 DbSession = Annotated[Session, Depends(get_session)]
 
