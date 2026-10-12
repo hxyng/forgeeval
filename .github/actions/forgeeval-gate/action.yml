@@ -1,0 +1,103 @@
+# ForgeEval regression gate.
+#
+# Registers a prompt version, runs an evaluation, waits for it, checks the project's regression
+# gates, writes a Markdown summary to the job summary and fails the step when a gate fails.
+#
+# Usage:
+#
+#   - uses: actions/checkout@v4
+#   - uses: ./.github/actions/forgeeval-gate      # or <owner>/forgeeval/.github/actions/forgeeval-gate@<ref>
+#     with:
+#       prompt: triage
+#       template-file: prompts/triage.txt
+#       model: openai/gpt-5-mini
+#       params: |
+#         temperature=0
+#         max_tokens=64
+#       dataset: triage            # NAME or NAME@VERSION
+#       evaluators: label-match,latency
+#       base-url: https://forgeeval.example.com
+#       api-key: ${{ secrets.FORGEEVAL_API_KEY }}
+#       fail-on-inconclusive: "false"
+#
+# The step exits 0 when all gates pass, 1 when a gate fails, 2 when the result is inconclusive
+# and fail-on-inconclusive is true, and 3 on usage, API or network errors or a timeout.
+name: ForgeEval regression gate
+description: Run a ForgeEval evaluation for a prompt and block the build when a regression gate fails.
+
+inputs:
+  prompt:
+    description: Prompt name to register a new version under.
+    required: true
+  template-file:
+    description: Path to the prompt template file, relative to the workspace.
+    required: true
+  model:
+    description: Model to evaluate, for example openai/gpt-5-mini or fake/oracle.
+    required: true
+  params:
+    description: Model parameters, one key=value per line. Values are parsed as JSON when possible.
+    required: false
+    default: ""
+  dataset:
+    description: Dataset as NAME or NAME@VERSION.
+    required: true
+  evaluators:
+    description: Comma-separated evaluators, each NAME or NAME@VERSION.
+    required: true
+  base-url:
+    description: ForgeEval API base URL.
+    required: false
+    default: http://localhost:8000
+  api-key:
+    description: ForgeEval API key. Pass it from a secret.
+    required: true
+  timeout:
+    description: Seconds to wait for the run to finish.
+    required: false
+    default: "900"
+  fail-on-inconclusive:
+    description: Fail the step (exit 2) when the gates are inconclusive.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install the ForgeEval CLI
+      shell: bash
+      run: pip install "${{ github.action_path }}/../../../sdk"
+
+    - name: Run the gate
+      shell: bash
+      env:
+        FORGEEVAL_API_KEY: ${{ inputs.api-key }}
+        FORGEEVAL_BASE_URL: ${{ inputs.base-url }}
+        IN_PROMPT: ${{ inputs.prompt }}
+        IN_TEMPLATE_FILE: ${{ inputs.template-file }}
+        IN_MODEL: ${{ inputs.model }}
+        IN_PARAMS: ${{ inputs.params }}
+        IN_DATASET: ${{ inputs.dataset }}
+        IN_EVALUATORS: ${{ inputs.evaluators }}
+        IN_TIMEOUT: ${{ inputs.timeout }}
+        IN_FAIL_ON_INCONCLUSIVE: ${{ inputs.fail-on-inconclusive }}
+      run: |
+        args=(gate --prompt "$IN_PROMPT" --template-file "$IN_TEMPLATE_FILE" --model "$IN_MODEL"
+              --dataset "$IN_DATASET" --timeout "$IN_TIMEOUT")
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          [ -n "$line" ] && args+=(--param "$line")
+        done <<< "$IN_PARAMS"
+        IFS=',' read -ra evals <<< "$IN_EVALUATORS"
+        for ev in "${evals[@]}"; do
+          ev="${ev//[[:space:]]/}"
+          [ -n "$ev" ] && args+=(--evaluator "$ev")
+        done
+        if [ "$IN_FAIL_ON_INCONCLUSIVE" = "true" ]; then
+          args+=(--fail-on-inconclusive)
+        fi
+        forgeeval "${args[@]}"

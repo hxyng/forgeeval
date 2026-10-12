@@ -1,0 +1,30 @@
+{"input": {"q": "I was charged twice for my subscription this month."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "The export button does nothing when I click it."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "I cannot reset my password, the email never arrives."}, "expected_output": {"label": "account"}}
+{"input": {"q": "Please refund the annual plan, I forgot to cancel."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "The dashboard crashes with a blank page on Safari."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "How do I change the email address on my account?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "My invoice shows the wrong company name."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Search results are empty even though I have data."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Please delete my account and all my data."}, "expected_output": {"label": "account"}}
+{"input": {"q": "The card on file was declined but I updated it already."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Uploading a CSV larger than 5 MB fails with a 500 error."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "I want to add a teammate to my workspace."}, "expected_output": {"label": "account"}}
+{"input": {"q": "Why did my price go up from $20 to $25?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Notifications arrive twice for every comment."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "My two-factor codes stopped working after I got a new phone."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I need a receipt for last month's payment for my accountant."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "The date picker shows the wrong month after midnight UTC."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "How do I transfer ownership of the organization?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "Can I switch to annual billing and get the discount?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Dark mode makes the chart labels unreadable."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "I am locked out after too many login attempts."}, "expected_output": {"label": "account"}}
+{"input": {"q": "A coupon code was not applied at checkout."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "The mobile app freezes on the settings screen."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Can I merge two accounts that use different emails?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "I was billed after cancelling my plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Webhook deliveries stopped after yesterday's update."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "How do I enable single sign-on for my team?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "Where can I download my VAT invoice?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Sorting by name returns items in random order."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Please rename my workspace."}, "expected_output": {"label": "account"}}

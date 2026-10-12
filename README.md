@@ -42,6 +42,18 @@ Schema changes: edit `forgeeval/db/models.py`, then
 `uv run alembic revision --autogenerate -m "<what changed>"` and review the generated file.
 `tests/test_schema.py::test_models_match_migration` fails if models and migrations drift.
 
+## CI regression gate
+
+`forgeeval gate` (in [`sdk/`](sdk/README.md)) runs an evaluation for a prompt change and fails the
+build when a regression gate fails. The composite action
+[`.github/actions/forgeeval-gate`](.github/actions/forgeeval-gate/action.yml) wraps it for GitHub
+Actions and writes a Markdown summary (gates, paired deltas with 95% CIs, newly failing items) to
+the job summary.
+
+[`.github/workflows/eval-gate.yml`](.github/workflows/eval-gate.yml) is a runnable demo: it starts
+the docker-compose stack, seeds [`examples/triage`](examples/triage) (30 tickets, an accuracy gate
+and a p95 latency gate), expects `fake/oracle` to pass and `fake/echo` to be blocked.
+
 ## Layout
 
 | Path | What lives there |

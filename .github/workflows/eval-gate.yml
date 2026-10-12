@@ -1,0 +1,69 @@
+name: eval-gate
+
+# Demo: ForgeEval gating a prompt change inside GitHub Actions, against the repo's own
+# docker-compose stack. A good model must pass; a regressed model must be blocked.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORGEEVAL_BASE_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the ForgeEval stack
+        run: docker compose up -d --build --wait
+
+      - name: Create an API key
+        run: |
+          KEY=$(docker compose exec -T api python -m forgeeval.admin bootstrap --org ci --project triage \
+            | awk '/^api_key:/ {print $2}')
+          test -n "$KEY"
+          echo "::add-mask::$KEY"
+          echo "FORGEEVAL_API_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Seed dataset, evaluators, gates and baseline
+        run: |
+          pip install httpx
+          python examples/triage/seed.py
+
+      - name: Good prompt change passes the gate
+        uses: ./.github/actions/forgeeval-gate
+        with:
+          prompt: triage
+          template-file: examples/triage/prompt.txt
+          model: fake/oracle
+          dataset: triage
+          evaluators: label-match,latency
+          base-url: ${{ env.FORGEEVAL_BASE_URL }}
+          api-key: ${{ env.FORGEEVAL_API_KEY }}
+
+      - name: Regressed prompt change is blocked by the gate
+        run: |
+          pip install ./sdk
+          set +e
+          forgeeval gate --prompt triage --template-file examples/triage/prompt.txt \
+            --model fake/echo --dataset triage --evaluator label-match --evaluator latency
+          code=$?
+          set -e
+          if [ "$code" -ne 1 ]; then
+            echo "::error::expected the regressed run to fail the gate (exit 1), got exit $code"
+            exit 1
+          fi
+          echo "Gate blocked the regression as expected."
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200

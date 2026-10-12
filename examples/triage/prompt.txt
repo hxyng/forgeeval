@@ -1,0 +1,4 @@
+Classify this support ticket as exactly one of: billing, bug, account.
+Reply with the single category word and nothing else.
+
+Ticket: {q}
