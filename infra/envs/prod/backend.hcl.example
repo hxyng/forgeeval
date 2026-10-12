@@ -1,0 +1,4 @@
+# terraform init -backend-config=backend.hcl
+# Values come from `terraform output` in infra/bootstrap.
+bucket = "forgeeval-prod-tfstate-123456789012"
+region = "us-east-1"

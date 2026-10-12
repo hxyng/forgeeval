@@ -1,0 +1,23 @@
+# Used by: trivy config --ignorefile infra/.trivyignore.yaml --severity HIGH,CRITICAL infra
+# Every entry is a deliberate decision; add new ones only with a justification.
+misconfigurations:
+  - id: AWS-0053
+    paths:
+      - "modules/alb/main.tf"
+    statement: "The load balancer is the product's public entry point and is internet-facing by design; it is the only resource that accepts internet traffic."
+
+  - id: AWS-0054
+    paths:
+      - "modules/alb/main.tf"
+    statement: "Without var.acm_certificate_arn (no domain or certificate exists yet) the HTTP listener forwards; once the certificate is set it becomes a 301 redirect to HTTPS. Plain HTTP is the documented first-deploy state."
+
+  - id: AWS-0104
+    paths:
+      - "modules/network/main.tf"
+    statement: "ECS tasks must reach ECR, S3, SQS, Secrets Manager, CloudWatch, X-Ray and the external model API; there are no VPC endpoints (cost). Egress is limited to TCP 443, and ingress is limited to the load balancer security group."
+
+  - id: AWS-0132
+    paths:
+      - "modules/data/main.tf"
+      - "bootstrap/main.tf"
+    statement: "Buckets use SSE-S3 (AES256) with bucket keys. A customer-managed KMS key adds cost and grant plumbing for task roles without a requirement for key-level audit or revocation of eval traces or Terraform state."
