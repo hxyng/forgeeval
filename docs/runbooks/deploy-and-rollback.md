@@ -157,8 +157,14 @@ authoritative record of ordinary job failures; DLQ messages mean the worker neve
 ## Database password rotation
 
 RDS rotates the master password in Secrets Manager every 7 days by default. ECS reads secrets only when a
-task starts, so a task started before a rotation holds the old password; new database connections from it
-can start failing. Until the application re-reads its credentials on authentication failure, redeploy
-(or `aws ecs update-service --force-new-deployment` for each service) at least every 7 days, or lengthen
-the rotation period of the secret in Secrets Manager. If `/readyz` suddenly fails with authentication
-errors, force a new deployment first.
+task starts, so the api and worker tasks don't get the password injected: they read the secret named by
+`DB_SECRET_ARN` for each new connection, cache it for 5 minutes, and re-read it as soon as Postgres rejects
+the password. Rotation therefore needs no action.
+
+If `/readyz` fails with `password authentication failed` anyway:
+
+1. Check the task role can still read the secret (`ReadDatabaseSecret` in the api/worker task policies)
+   and that the API logs show `database rejected cached credentials; re-reading the secret`.
+2. Check the secret's current value works: `aws secretsmanager get-secret-value --secret-id <arn>` and
+   connect with it from a one-off task.
+3. As a last resort, `aws ecs update-service --force-new-deployment` for api and worker.
