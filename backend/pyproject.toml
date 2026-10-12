@@ -12,12 +12,12 @@ dependencies = [
   "pydantic-settings>=2.6",
   "redis>=5.2",
   "jsonschema>=4.23",
+  "httpx>=0.28",
 ]
 
 [dependency-groups]
 dev = [
   "pytest>=8.3",
-  "httpx>=0.28",
   "ruff>=0.8",
   "mypy>=1.13",
   "types-jsonschema>=4.26.0.20261006",
