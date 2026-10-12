@@ -124,3 +124,11 @@ export function shortId(id: string | null | undefined): string {
 export function pluralize(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+/** A change in a 0..1 rate, in percentage points: "−10 pp". */
+export function formatPoints(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return DASH;
+  const pp = Math.round(v * 1000) / 10;
+  if (pp === 0) return "0 pp";
+  return `${pp > 0 ? "+" : MINUS}${Math.abs(pp)} pp`;
+}

@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useRun, useRunItems } from "../api/queries";
@@ -107,7 +107,10 @@ function ItemRow({
   const failing = item.scores.some((s) => s.passed === false);
   return (
     <Fragment>
-      <tr className={failing || item.status === "dead_lettered" ? "row-fail" : undefined}>
+      <tr
+        id={`item-${item.id}`}
+        className={failing || item.status === "dead_lettered" ? "row-fail" : undefined}
+      >
         <td>
           <button
             type="button"
@@ -160,6 +163,7 @@ export function ItemsPage() {
     const next = new URLSearchParams(params);
     if (value) next.set(name, value);
     else next.delete(name);
+    next.delete("focus");
     setParams(next, { replace: true });
     setExpanded(new Set());
   }
@@ -170,6 +174,21 @@ export function ItemsPage() {
   }
 
   const rows = items.data?.pages.flatMap((p) => p.items) ?? [];
+  const focus = params.get("focus") ?? "";
+  const focusRow = focus ? rows.find((r) => r.dataset_item_id === focus) : undefined;
+  const focusId = focusRow?.id;
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = items;
+
+  // Arriving from the compare page: open the item you clicked, paging forward until it is found.
+  useEffect(() => {
+    if (!focus) return;
+    if (focusId) {
+      setExpanded((prev) => (prev.has(focusId) ? prev : new Set(prev).add(focusId)));
+      document.getElementById(`item-${focusId}`)?.scrollIntoView?.({ block: "center" });
+    } else if (hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }, [focus, focusId, hasNextPage, isFetchingNextPage, fetchNextPage]);
   const filtered = Boolean(filters.status || filters.failed_evaluator || filters.tag);
   const colSpan = 8;
 

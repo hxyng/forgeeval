@@ -76,6 +76,71 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  web-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: web
+    env:
+      FORGEEVAL_BASE_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the stack, including the web console
+        run: docker compose up -d --build --wait
+
+      - name: Create an API key
+        run: |
+          KEY=$(docker compose exec -T api python -m forgeeval.admin bootstrap --org ci --project triage             | awk '/^api_key:/ {print $2}')
+          test -n "$KEY"
+          echo "::add-mask::$KEY"
+          echo "FORGEEVAL_API_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Seed the triage example and create a regressed run
+        run: |
+          pip install ./sdk
+          python examples/triage/seed.py
+          # fake/echo regresses accuracy, so the gate exits 1. That is the point; tolerate it.
+          forgeeval gate --prompt triage --template-file examples/triage/prompt.txt             --model fake/echo --dataset triage --evaluator label-match --evaluator latency             --poll-interval 1 || test "$?" -eq 1
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install Playwright and Chromium
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+
+      - name: End-to-end test against the compose web service (nginx on :3000)
+        working-directory: web
+        env:
+          E2E_BASE_URL: http://localhost:3000
+        run: pnpm e2e
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          if-no-files-found: ignore
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
   images:
     runs-on: ubuntu-latest
     steps:
