@@ -273,8 +273,11 @@ def expire_lease(db: Session, item_id: uuid.UUID, attempt: int | None = None) ->
 
 
 def test_reaper_retries_items_whose_worker_died(
-    client: TestClient, db: Session, queue: RecordingQueue
+    client: TestClient, db: Session, queue: RecordingQueue, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Pin the backoff: with 0-2 s of jitter the retry can already be due when the same reaper pass
+    # reaches its requeue step, and the item would (correctly) go straight back to 'queued'.
+    monkeypatch.setattr("forgeeval.worker.reaper.retry_delay", lambda attempt: 60.0)
     run_id = start_run(client)
     item = items(db, run_id)[0]
     claim(db, item.id, "dead-worker")
