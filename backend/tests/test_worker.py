@@ -57,6 +57,21 @@ class ScriptedModels:
         return Generation(output=expected, latency_ms=40, cost_usd=Decimal("0.0001"))
 
 
+@pytest.fixture(autouse=True)
+def isolate_reaper(db: Session) -> None:
+    """The reaper scans every project, so retire jobs other tests left active.
+
+    Without this, a retry left by an earlier test (backoff is 0-2s of jitter) becomes due
+    mid-test and the reaper picks it up too, which made reaper assertions flaky.
+    """
+    db.execute(
+        update(RunItem)
+        .where(RunItem.status.in_([ItemStatus.queued, ItemStatus.leased, ItemStatus.retry_wait]))
+        .values(status=ItemStatus.cancelled)
+    )
+    db.commit()
+
+
 @pytest.fixture
 def queue() -> Iterator[RecordingQueue]:
     q = RecordingQueue()
