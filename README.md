@@ -31,6 +31,14 @@ docker compose exec api python -m forgeeval.admin bootstrap --org acme --project
 curl -H "Authorization: Bearer fe_..." localhost:8000/v1/whoami
 ```
 
+## Dashboards
+
+The collector turns the API's and workers' OTLP metrics into Prometheus metrics (**http://localhost:9090**),
+and Grafana (**http://localhost:3001**, anonymous viewer access for local use) provisions the
+"ForgeEval operations" dashboard from `observability/grafana/`: request latency p50/p95 by route, HTTP
+error rate, queue depth, worker throughput by outcome, item processing time, evaluation cost, runs
+created and ingested traces. The dashboard links to Jaeger for the matching traces.
+
 ## Develop the backend
 
 ```bash
