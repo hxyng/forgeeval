@@ -22,6 +22,7 @@ from forgeeval.auth import AuthContext, Scope, require
 from forgeeval.db.base import uuid7
 from forgeeval.db.models import PromptVersion, Span, SpanKind, Trace, TraceStatus
 from forgeeval.db.session import get_session
+from forgeeval.telemetry import ingested_traces, record
 
 router = APIRouter(prefix="/v1/traces", tags=["traces"])
 
@@ -279,9 +280,17 @@ def ingest_batch(
             db.execute(insert(Span), span_rows)
         db.commit()
 
+    duplicates = len(valid) - len(inserted) + in_batch_dupes
+    for outcome, n in (
+        ("accepted", len(inserted)),
+        ("duplicate", duplicates),
+        ("rejected", len(rejected)),
+    ):
+        if n:
+            record(ingested_traces.add, n, {"outcome": outcome})
     return TraceBatchOut(
         accepted=len(inserted),
-        duplicates=len(valid) - len(inserted) + in_batch_dupes,
+        duplicates=duplicates,
         rejected=rejected,
         unresolved_prompts=[PromptRef(name=n, version=v) for n, v in unresolved],
     )

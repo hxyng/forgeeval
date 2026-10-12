@@ -20,7 +20,9 @@ curl localhost:8000/readyz
 ```
 
 That starts Postgres (host port **5433**, so it won't clash with a native install), Redis, a one-shot
-migration job, the API on `localhost:8000` (OpenAPI docs at `/docs`) and two worker replicas.
+migration job, the API on `localhost:8000` (OpenAPI docs at `/docs`), two worker replicas, an
+OpenTelemetry Collector and Jaeger. Traces are at **http://localhost:16686**: one trace follows an
+evaluation from the HTTP request through the Redis queue to every worker span and Postgres query.
 
 Create a project and an API key (printed once, store it):
 

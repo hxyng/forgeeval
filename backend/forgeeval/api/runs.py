@@ -35,6 +35,7 @@ from forgeeval.db.models import (
 )
 from forgeeval.db.session import get_session
 from forgeeval.queue import JobQueue, get_queue
+from forgeeval.telemetry import record, runs_created
 
 log = logging.getLogger("forgeeval.api.runs")
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
@@ -161,13 +162,14 @@ def _run_out(db: Session, run: EvalRun) -> RunOut:
             .order_by(Evaluator.name)
         )
     ]
-    counts = dict(
-        db.execute(
+    counts: dict[ItemStatus, int] = {
+        item_status: n
+        for item_status, n in db.execute(
             select(RunItem.status, func.count())
             .where(RunItem.run_id == run.id)
             .group_by(RunItem.status)
-        ).all()
-    )
+        )
+    }
     progress = Progress(**{s.value: counts.get(s, 0) for s in ItemStatus})
     return RunOut(
         id=run.id,
@@ -260,6 +262,7 @@ def create_run(
         ],
     )
     db.commit()
+    record(runs_created.add, 1, {"trigger": body.trigger.value})
 
     try:
         for i in range(0, len(item_ids), ENQUEUE_CHUNK):

@@ -8,9 +8,13 @@ from sqlalchemy.orm import Session
 
 from forgeeval.api import compare, gates, registry, runs, traces
 from forgeeval.auth import AuthContext, authenticate
-from forgeeval.db.session import get_session
+from forgeeval.db.session import engine, get_session
+from forgeeval.telemetry import instrument_app, instrument_engine, setup_telemetry
 
 app = FastAPI(title="ForgeEval API", version="0.1.0")
+setup_telemetry("forgeeval-api")
+instrument_app(app)
+instrument_engine(engine)
 app.include_router(traces.router)
 app.include_router(registry.router)
 app.include_router(runs.router)

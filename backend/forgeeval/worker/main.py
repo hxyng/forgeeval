@@ -9,12 +9,24 @@ import os
 import signal
 import socket
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from types import FrameType
 
-from forgeeval.db.session import SessionLocal
+from opentelemetry.metrics import CallbackOptions, Observation
+from opentelemetry.trace import SpanKind
+
+from forgeeval.db.session import SessionLocal, engine
 from forgeeval.models_client import ModelClient, default_client
 from forgeeval.queue import JobQueue, get_queue
+from forgeeval.telemetry import (
+    configure_logging,
+    extract_context,
+    instrument_engine,
+    meter,
+    setup_telemetry,
+    tracer,
+)
 from forgeeval.worker.processor import Outcome, process
 from forgeeval.worker.reaper import reap
 
@@ -39,10 +51,22 @@ class Worker:
         now = time.monotonic()
         if now - self._last_reap >= REAP_EVERY_SECONDS:
             self._last_reap = now
-            with SessionLocal() as db:
+            with tracer.start_as_current_span("reaper"), SessionLocal() as db:
                 reap(db, self.queue)
         for msg in self.queue.receive(self.worker_id, self.batch, self.wait_seconds):
-            with SessionLocal() as db:
+            # Continue the trace started by the request that enqueued this item.
+            consumer_span = tracer.start_as_current_span(
+                "eval-jobs process",
+                context=extract_context(msg.headers),
+                kind=SpanKind.CONSUMER,
+                attributes={
+                    "messaging.system": "redis_streams",
+                    "messaging.operation.type": "process",
+                    "messaging.message.id": msg.receipt,
+                    "messaging.message.delivery_count": msg.deliveries,
+                },
+            )
+            with consumer_span, SessionLocal() as db:
                 outcome = process(db, msg.run_item_id, self.worker_id, self.models)
             # Ack in every case: the database now records the item's state, and a retry is
             # re-enqueued by the reaper when its backoff is due.
@@ -65,9 +89,28 @@ class Worker:
         log.info("worker %s stopped", self.worker_id)
 
 
+def observe_queue_depth(queue: JobQueue) -> None:
+    def callback(_options: CallbackOptions) -> Iterable[Observation]:
+        try:
+            yield Observation(queue.depth())
+        except Exception:
+            log.debug("queue depth unavailable", exc_info=True)
+
+    meter.create_observable_gauge(
+        "forgeeval.queue.depth",
+        callbacks=[callback],
+        unit="{message}",
+        description="Messages enqueued but not yet acknowledged",
+    )
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    worker = Worker(queue=get_queue(), models=default_client())
+    configure_logging()
+    setup_telemetry("forgeeval-worker")
+    instrument_engine(engine)
+    queue = get_queue()
+    observe_queue_depth(queue)
+    worker = Worker(queue=queue, models=default_client())
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
     worker.run_forever()
