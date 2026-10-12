@@ -1,3 +1,4 @@
+import random
 import uuid
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from forgeeval.api.main import app
 from forgeeval.queue import get_queue
-from forgeeval.stats import direction, paired_delta
+from forgeeval.stats import direction, min_items_for_quantile, paired_delta
 
 ClientFactory = Callable[..., TestClient]
 
@@ -17,22 +18,56 @@ ClientFactory = Callable[..., TestClient]
 # ---------- stats ----------
 
 
-def test_paired_delta_matches_hand_computation() -> None:
-    # 1 of 20 items flips 1 -> 0: mean -0.05, sd^2 = 0.05, se = 0.05, half-width 0.098
-    pairs = [(1.0, 1.0)] * 19 + [(1.0, 0.0)]
-    d = paired_delta(pairs)
-    assert d is not None
-    assert d.mean == pytest.approx(-0.05)
-    assert d.ci95_high - d.mean == pytest.approx(1.959964 * 0.05, rel=1e-6)
-    assert not d.significant
+def test_continuous_scores_use_a_t_interval() -> None:
+    # diffs 1,2,3,4: mean 2.5, sd 1.2910, se 0.6455, t(0.975, 3) = 3.1824 -> half-width 2.0542
+    d = paired_delta([(0.0, 1.0), (0.0, 2.0), (0.0, 3.0), (0.0, 4.0)])
+    assert d is not None and d.method == "paired-t"
+    assert d.mean == pytest.approx(2.5)
+    assert d.ci_high - d.mean == pytest.approx(2.0542, abs=1e-3)
 
 
-def test_constant_shift_is_significant_and_single_pair_is_not() -> None:
-    d = paired_delta([(100.0, 150.0)] * 10)
-    assert d is not None and d.mean == 50 and d.significant
-    one = paired_delta([(0.0, 1.0)])
+def test_binary_scores_use_exact_mcnemar_and_a_bounded_interval() -> None:
+    lost5 = [(1.0, 1.0)] * 15 + [(1.0, 0.0)] * 5
+    d = paired_delta(lost5)
+    assert d is not None and d.method == "mcnemar-newcombe"
+    assert d.mean == pytest.approx(-0.25)
+    assert d.p_value == pytest.approx(2 * 0.5**5)  # exact two-sided binomial on 5 discordant
+    assert -1 <= d.ci_low < d.ci_high <= 1
+    one = paired_delta([(1.0, 1.0)] * 19 + [(1.0, 0.0)])
     assert one is not None and not one.significant
+    all_lost = paired_delta([(1.0, 0.0)] * 30)
+    assert all_lost is not None and all_lost.ci_low == -1.0 and all_lost.significant
+
+
+def test_binary_interval_keeps_its_coverage_when_flips_are_rare() -> None:
+    # The old normal approximation covered the true drop only ~80% of the time here
+    # (zero-width intervals whenever no item happened to flip).
+    rng = random.Random(3)
+    covered, reps, true_drop = 0, 600, 0.05
+    for _ in range(reps):
+        pairs = [(1.0, 0.0) if rng.random() < true_drop else (1.0, 1.0) for _ in range(30)]
+        d = paired_delta(pairs)
+        assert d is not None
+        covered += d.ci_low <= -true_drop <= d.ci_high
+    assert covered / reps >= 0.95
+
+
+def test_wider_confidence_widens_the_interval() -> None:
+    pairs = [(1.0, 1.0)] * 12 + [(1.0, 0.0)] * 8
+    narrow, wide = paired_delta(pairs, 0.95), paired_delta(pairs, 0.975)
+    assert narrow is not None and wide is not None
+    assert wide.ci_low < narrow.ci_low and wide.ci_high > narrow.ci_high
+
+
+def test_single_pair_and_empty() -> None:
+    one = paired_delta([(0.0, 1.0)])
+    assert one is not None and not one.significant and one.method == "single-pair"
     assert paired_delta([]) is None
+
+
+def test_quantile_minimum_sizes() -> None:
+    assert min_items_for_quantile(0.95) == 59  # log(0.05) / log(0.95) = 58.4
+    assert min_items_for_quantile(0.5) == 5
 
 
 @pytest.mark.parametrize(

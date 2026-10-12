@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from scenarios import NullQueue, completed_run, setup_tickets
 from sqlalchemy.orm import Session
 
-from forgeeval.api.compare import EvaluatorComparison, EvaluatorMetrics
+from forgeeval.api.compare import EvaluatorMetrics
 from forgeeval.api.gates import decide
 from forgeeval.api.main import app
 from forgeeval.db.models import (
@@ -19,18 +19,19 @@ from forgeeval.db.models import (
     RegressionGate,
 )
 from forgeeval.queue import get_queue
+from forgeeval.stats import PairedDelta
 
 # ---------- verdict logic ----------
 
 
-def metrics(mean: float | None = None, p95: float | None = None) -> EvaluatorMetrics:
+def metrics(mean: float | None = None, p95: float | None = None, n: int = 100) -> EvaluatorMetrics:
     return EvaluatorMetrics(
         evaluator="e",
         version=1,
         evaluator_version_id=uuid.uuid4(),
         kind=EvaluatorKind.latency,
         higher_is_better=True,
-        n=10,
+        n=n,
         mean=mean,
         p50=None,
         p95=p95,
@@ -43,22 +44,9 @@ def gate(agg: GateAggregate, comp: GateComparator, threshold: str) -> Regression
     return RegressionGate(name="g", aggregate=agg, comparator=comp, threshold=Decimal(threshold))
 
 
-def comparison(significant: bool) -> EvaluatorComparison:
-    m = metrics(0.5)
-    return EvaluatorComparison(
-        evaluator="e",
-        version=1,
-        higher_is_better=True,
-        candidate=m,
-        baseline=m,
-        paired_n=20,
-        delta_mean=-0.1,
-        ci95_low=-0.2 if significant else -0.3,
-        ci95_high=-0.01 if significant else 0.1,
-        delta_pass_rate=None,
-        significant=significant,
-        direction="regressed" if significant else "unchanged",
-    )
+def interval(low: float, high: float, n: int = 100) -> PairedDelta:
+    """Interval on candidate - baseline (negative = worse for higher-is-better metrics)."""
+    return PairedDelta(n, (low + high) / 2, low, high, 0.5, "paired-t", 0.95)
 
 
 MIN_P95 = gate(GateAggregate.p95, GateComparator.min_absolute, "1500")
@@ -66,10 +54,11 @@ DROP_MEAN = gate(GateAggregate.mean, GateComparator.max_drop_vs_baseline, "0.05"
 
 
 @pytest.mark.parametrize(
-    ("g", "hib", "cand", "base", "cmp", "verdict"),
+    ("g", "hib", "cand", "base", "ci", "verdict"),
     [
         (MIN_P95, False, metrics(p95=1200), None, None, GateVerdict.passed),
         (MIN_P95, False, metrics(p95=1800), None, None, GateVerdict.failed),
+        (MIN_P95, False, metrics(p95=1200, n=58), None, None, GateVerdict.inconclusive),
         (
             gate(GateAggregate.mean, GateComparator.min_absolute, "0.9"),
             True,
@@ -78,11 +67,32 @@ DROP_MEAN = gate(GateAggregate.mean, GateComparator.max_drop_vs_baseline, "0.05"
             None,
             GateVerdict.failed,
         ),
-        (DROP_MEAN, True, metrics(0.80), metrics(0.82), comparison(True), GateVerdict.passed),
-        (DROP_MEAN, True, metrics(0.70), metrics(0.82), comparison(True), GateVerdict.failed),
-        (DROP_MEAN, True, metrics(0.70), metrics(0.82), comparison(False), GateVerdict.passed),
+        # worsening interval = (-high, -low): entirely above 0.05 -> fail
+        (DROP_MEAN, True, metrics(0.70), metrics(0.82), interval(-0.2, -0.06), GateVerdict.failed),
+        # entirely within 0.05 -> pass, even though the point estimate moved
+        (DROP_MEAN, True, metrics(0.80), metrics(0.82), interval(-0.04, 0.0), GateVerdict.passed),
+        # straddles 0.05 -> inconclusive, never a silent pass
+        (
+            DROP_MEAN,
+            True,
+            metrics(0.70),
+            metrics(0.82),
+            interval(-0.3, 0.1),
+            GateVerdict.inconclusive,
+        ),
+        (
+            DROP_MEAN,
+            True,
+            metrics(0.81),
+            metrics(0.82),
+            interval(-0.3, 0.1),
+            GateVerdict.inconclusive,
+        ),
+        # lower-is-better: worsening interval = (low, high)
+        (DROP_MEAN, False, metrics(130), metrics(100), interval(20, 40), GateVerdict.failed),
         (DROP_MEAN, True, metrics(0.70), None, None, GateVerdict.inconclusive),
         (DROP_MEAN, True, None, metrics(0.8), None, GateVerdict.inconclusive),
+        (DROP_MEAN, True, metrics(0.70), metrics(0.82), None, GateVerdict.inconclusive),
         (MIN_P95, False, metrics(mean=1.0), None, None, GateVerdict.inconclusive),
     ],
 )
@@ -91,15 +101,23 @@ def test_decide(
     hib: bool,
     cand: EvaluatorMetrics | None,
     base: EvaluatorMetrics | None,
-    cmp: EvaluatorComparison | None,
+    ci: PairedDelta | None,
     verdict: GateVerdict,
 ) -> None:
-    assert decide(g, hib, cand, base, cmp).verdict is verdict
+    assert decide(g, hib, cand, base, ci).verdict is verdict
 
 
-def test_noise_verdict_explains_itself() -> None:
-    v = decide(DROP_MEAN, True, metrics(0.70), metrics(0.82), comparison(False))
-    assert "treated as noise" in v.reason and v.delta == Decimal("-0.12")
+def test_inconclusive_says_how_many_items_would_decide() -> None:
+    v = decide(DROP_MEAN, True, metrics(0.70), metrics(0.82), interval(-0.3, 0.06, n=40))
+    assert v.verdict is GateVerdict.inconclusive
+    assert "straddles allowed 0.05" in v.reason and "items would decide it" in v.reason
+    assert v.delta == Decimal("-0.12")
+
+
+def test_p95_drop_gate_needs_59_items_in_both_runs() -> None:
+    drop_p95 = gate(GateAggregate.p95, GateComparator.max_drop_vs_baseline, "100")
+    v = decide(drop_p95, False, metrics(p95=900, n=200), metrics(p95=800, n=30), None)
+    assert v.verdict is GateVerdict.inconclusive and "at least 59" in v.reason
 
 
 # ---------- API ----------
@@ -125,7 +143,7 @@ def make_gate(c: TestClient, name: str, evaluator: str, **spec: Any) -> dict[str
 
 
 ACCURACY = {"aggregate": "mean", "comparator": "max_drop_vs_baseline", "threshold": "0.05"}
-SPEED = {"aggregate": "p95", "comparator": "min_absolute", "threshold": "120"}
+SPEED = {"aggregate": "p50", "comparator": "min_absolute", "threshold": "120"}
 
 
 def test_gate_crud(client: TestClient) -> None:
@@ -150,26 +168,49 @@ def test_regression_fails_the_gate_against_auto_baseline(
 ) -> None:
     make_gate(client, "accuracy", "label", **ACCURACY)
     base = completed_run(client, db, {})
-    cand = completed_run(client, db, {"wrong_first": 5})
+    cand = completed_run(client, db, {"wrong_first": 8})
     check = client.post(
         "/v1/gates/accuracy/check",
         json={"run_id": cand, "repo": "acme/bot", "pr_number": 42, "commit_sha": "abc123"},
     ).json()
     assert check["verdict"] == "fail"
     assert check["baseline_run_id"] == base
-    assert Decimal(check["delta"]) == Decimal("-0.25")
-    assert "worsened by 0.25" in check["reason"]
+    assert Decimal(check["delta"]) == Decimal("-0.4")
+    assert "entirely above allowed 0.05" in check["reason"]
 
     history = client.get("/v1/gates/accuracy/checks").json()
     assert history[0]["pr_number"] == 42 and history[0]["verdict"] == "fail"
 
 
-def test_noise_passes_and_improvement_passes(client: TestClient, db: Session) -> None:
+def test_small_drop_on_20_items_is_inconclusive_not_pass(client: TestClient, db: Session) -> None:
     make_gate(client, "accuracy", "label", **{**ACCURACY, "threshold": "0.01"})
     base = completed_run(client, db, {})
     noisy = completed_run(client, db, {"wrong_first": 1}, baseline_run_id=base)
     v = client.post("/v1/gates/accuracy/check", json={"run_id": noisy}).json()
-    assert v["verdict"] == "pass" and "treated as noise" in v["reason"]
+    assert v["verdict"] == "inconclusive" and "straddles allowed 0.01" in v["reason"]
+
+    five = completed_run(client, db, {"wrong_first": 5}, baseline_run_id=base)
+    make_gate(client, "accuracy5", "label", **ACCURACY)
+    v = client.post("/v1/gates/accuracy5/check", json={"run_id": five}).json()
+    assert v["verdict"] == "inconclusive"  # CI on the drop reaches down to 3.8 points
+
+
+def test_identical_runs_pass_at_a_tolerance_the_sample_can_certify(
+    client: TestClient, db: Session
+) -> None:
+    make_gate(client, "loose", "label", **{**ACCURACY, "threshold": "0.2"})
+    base = completed_run(client, db, {})
+    same = completed_run(client, db, {}, baseline_run_id=base)
+    v = client.post("/v1/gates/loose/check", json={"run_id": same}).json()
+    assert v["verdict"] == "pass" and "within allowed 0.2" in v["reason"]
+    assert "worsening 0," in v["reason"] and "worsening -0" not in v["reason"]
+
+
+def test_p95_gate_on_20_items_is_inconclusive(client: TestClient, db: Session) -> None:
+    make_gate(client, "tail", "speed", aggregate="p95", comparator="min_absolute", threshold="120")
+    run = completed_run(client, db, {})
+    v = client.post("/v1/gates/tail/check", json={"run_id": run}).json()
+    assert v["verdict"] == "inconclusive" and "at least 59" in v["reason"]
 
 
 def test_absolute_latency_gate(client: TestClient, db: Session) -> None:
@@ -213,8 +254,10 @@ def test_check_all_combines_verdicts(client: TestClient, db: Session) -> None:
     make_gate(client, "speed", "speed", **SPEED)
     make_gate(client, "off", "label", **{**ACCURACY, "enabled": False})
     completed_run(client, db, {})
-    cand = completed_run(client, db, {"wrong_first": 5})
+    cand = completed_run(client, db, {"wrong_first": 8})
     out = client.post("/v1/gates:check", json={"run_id": cand}).json()
+    accuracy = next(c for c in out["checks"] if c["gate"] == "accuracy")
+    assert "97.5% CI" in accuracy["reason"]  # Bonferroni across the 2 applicable gates
     assert out["verdict"] == "fail"
     assert {c["gate"]: c["verdict"] for c in out["checks"]} == {"accuracy": "fail", "speed": "pass"}
 
@@ -236,6 +279,9 @@ def test_checking_requires_gates_scope(
 
 
 def test_unchanged_metric_reads_as_zero_not_negative_zero() -> None:
-    v = decide(DROP_MEAN, True, metrics(1.0), metrics(1.0), comparison(False))
+    drop_p50 = gate(GateAggregate.p50, GateComparator.max_drop_vs_baseline, "0.05")
+    m = metrics(1.0)
+    m = m.model_copy(update={"p50": 1.0})
+    v = decide(drop_p50, True, m, m, None)
     assert v.verdict is GateVerdict.passed
     assert "worsened by 0," in v.reason and "-0" not in v.reason

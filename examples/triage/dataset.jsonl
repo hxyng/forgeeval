@@ -28,3 +28,93 @@
 {"input": {"q": "Where can I download my VAT invoice?"}, "expected_output": {"label": "billing"}}
 {"input": {"q": "Sorting by name returns items in random order."}, "expected_output": {"label": "bug"}}
 {"input": {"q": "Please rename my workspace."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I was charged $12 for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged $49 for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged twice for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed $12 for the annual plan?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed $49 for the annual plan?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed twice for the annual plan?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Please refund the $12 charge for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Please refund the $49 charge for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Please refund the twice charge for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "My invoice shows $12 for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "My invoice shows $49 for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "My invoice shows twice for the annual plan."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged $12 for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged $49 for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged twice for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed $12 for an extra seat?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed $49 for an extra seat?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed twice for an extra seat?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Please refund the $12 charge for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Please refund the $49 charge for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Please refund the twice charge for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "My invoice shows $12 for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "My invoice shows $49 for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "My invoice shows twice for an extra seat."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged $12 for a plan I cancelled."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged $49 for a plan I cancelled."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "I was charged twice for a plan I cancelled."}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed $12 for a plan I cancelled?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed $49 for a plan I cancelled?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "Why did my card get billed twice for a plan I cancelled?"}, "expected_output": {"label": "billing"}}
+{"input": {"q": "The search box freezes on Safari."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The search box shows an error on the Android app."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The search box does nothing on the settings page."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open Safari the search box freezes."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open the Android app the search box shows an error."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open the settings page the search box does nothing."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Since the update, the search box freezes in Safari."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Since the update, the search box shows an error in the Android app."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Since the update, the search box does nothing in the settings page."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Safari: the search box freezes."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The Android app: the search box shows an error."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The settings page: the search box does nothing."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The export button freezes on Safari."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The export button shows an error on the Android app."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The export button does nothing on the settings page."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open Safari the export button freezes."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open the Android app the export button shows an error."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open the settings page the export button does nothing."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Since the update, the export button freezes in Safari."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Since the update, the export button shows an error in the Android app."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Since the update, the export button does nothing in the settings page."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "Safari: the export button freezes."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The Android app: the export button shows an error."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The settings page: the export button does nothing."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The date picker freezes on Safari."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The date picker shows an error on the Android app."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "The date picker does nothing on the settings page."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open Safari the date picker freezes."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open the Android app the date picker shows an error."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "When I open the settings page the date picker does nothing."}, "expected_output": {"label": "bug"}}
+{"input": {"q": "I can't change my email on my account."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't change my email on my account before Friday."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't change my email on my account for my team."}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I change my email?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I change my email before Friday?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I change my email for my team?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "Please help me change my email."}, "expected_output": {"label": "account"}}
+{"input": {"q": "Please help me change my email before Friday."}, "expected_output": {"label": "account"}}
+{"input": {"q": "Please help me change my email for my team."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I need to change my email."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I need to change my email before Friday."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I need to change my email for my team."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't turn on two-factor login on my account."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't turn on two-factor login on my account before Friday."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't turn on two-factor login on my account for my team."}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I turn on two-factor login?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I turn on two-factor login before Friday?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I turn on two-factor login for my team?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "Please help me turn on two-factor login."}, "expected_output": {"label": "account"}}
+{"input": {"q": "Please help me turn on two-factor login before Friday."}, "expected_output": {"label": "account"}}
+{"input": {"q": "Please help me turn on two-factor login for my team."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I need to turn on two-factor login."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I need to turn on two-factor login before Friday."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I need to turn on two-factor login for my team."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't transfer ownership to a coworker on my account."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't transfer ownership to a coworker on my account before Friday."}, "expected_output": {"label": "account"}}
+{"input": {"q": "I can't transfer ownership to a coworker on my account for my team."}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I transfer ownership to a coworker?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I transfer ownership to a coworker before Friday?"}, "expected_output": {"label": "account"}}
+{"input": {"q": "How do I transfer ownership to a coworker for my team?"}, "expected_output": {"label": "account"}}

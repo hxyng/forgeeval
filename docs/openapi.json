@@ -497,6 +497,29 @@
             "title": "Higher Is Better",
             "type": "boolean"
           },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "mcnemar-newcombe (binary scores) or paired-t; see forgeeval/stats.py",
+            "title": "Method"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Value"
+          },
           "paired_n": {
             "title": "Paired N",
             "type": "integer"
@@ -520,6 +543,7 @@
           "delta_mean",
           "ci95_low",
           "ci95_high",
+          "p_value",
           "delta_pass_rate",
           "significant",
           "direction"

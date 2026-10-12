@@ -11,6 +11,7 @@ Inconclusive means "no evidence either way" (run failed or was cancelled, metric
 baseline); CI decides whether that blocks. Every check is stored with its reason.
 """
 
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,10 +25,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from forgeeval.api.compare import (
-    EvaluatorComparison,
     EvaluatorMetrics,
     compare_runs,
     get_run,
+    paired_stats,
     run_metrics,
 )
 from forgeeval.api.registry import NAME_PATTERN
@@ -47,6 +48,7 @@ from forgeeval.db.models import (
     RunStatus,
 )
 from forgeeval.db.session import get_session
+from forgeeval.stats import PairedDelta, min_items_for_quantile
 
 router = APIRouter(prefix="/v1/gates", tags=["gates"])
 
@@ -147,14 +149,40 @@ def _d(x: float) -> Decimal:
     return Decimal(str(round(x, 6)))
 
 
+QUANTILES = {GateAggregate.p50: 0.5, GateAggregate.p95: 0.95}
+# Aggregates whose paired interval we can compute: the mean always; the pass rate when scores are
+# binary (then the mean *is* the pass rate).
+INTERVAL_AGGREGATES = {GateAggregate.mean, GateAggregate.pass_rate}
+
+
+def _too_few_for_quantile(agg: GateAggregate, *ns: int) -> str | None:
+    q = QUANTILES.get(agg)
+    if q is None:
+        return None
+    need = min_items_for_quantile(q)
+    if min(ns) < need:
+        return (
+            f"{agg.value} needs at least {need} scored items to be estimated reliably "
+            f"(have {min(ns)}); gate on the mean or p50, or add items"
+        )
+    return None
+
+
 def decide(
     gate: RegressionGate,
     higher_is_better: bool,
     candidate: EvaluatorMetrics | None,
     baseline: EvaluatorMetrics | None,
-    comparison: EvaluatorComparison | None,
+    interval: PairedDelta | None,
 ) -> Verdict:
-    label = f"{gate.aggregate.value}"
+    """Non-inferiority decision for one gate.
+
+    ``max_drop_vs_baseline`` with an interval: fail only when even the optimistic end of the
+    interval on *worsening* exceeds the allowed drop; pass only when even the pessimistic end is
+    within it; otherwise the data can't tell, so the verdict is inconclusive (with roughly how
+    many items would decide it). Low power therefore never turns into a silent pass.
+    """
+    label = gate.aggregate.value
     if candidate is None:
         return Verdict(GateVerdict.inconclusive, "run has no scores for this evaluator version")
     observed = _aggregate(candidate, gate.aggregate)
@@ -163,6 +191,8 @@ def decide(
     threshold = float(gate.threshold)
 
     if gate.comparator is GateComparator.min_absolute:
+        if (why := _too_few_for_quantile(gate.aggregate, candidate.n)) is not None:
+            return Verdict(GateVerdict.inconclusive, why, observed=_d(observed))
         ok = observed >= threshold if higher_is_better else observed <= threshold
         op = ">=" if higher_is_better else "<="
         return Verdict(
@@ -180,31 +210,59 @@ def decide(
     base = _aggregate(baseline, gate.aggregate)
     if base is None:
         return Verdict(GateVerdict.inconclusive, f"baseline has no {label}", observed=_d(observed))
+    if (why := _too_few_for_quantile(gate.aggregate, candidate.n, baseline.n)) is not None:
+        return Verdict(GateVerdict.inconclusive, why, observed=_d(observed), baseline=_d(base))
     delta = observed - base
     worsening = -delta if higher_is_better else delta
     common = {"observed": _d(observed), "baseline": _d(base), "delta": _d(delta)}
-    if worsening <= threshold:
+    head = f"{label} {base:.4g} -> {observed:.4g}"
+
+    use_interval = gate.aggregate is GateAggregate.mean or (
+        gate.aggregate is GateAggregate.pass_rate
+        and interval is not None
+        and interval.method == "mcnemar-newcombe"
+    )
+    if not use_interval:
+        # Medians and non-binary pass rates: point estimate (no paired interval available).
+        verdict = GateVerdict.passed if worsening <= threshold else GateVerdict.failed
         return Verdict(
-            GateVerdict.passed,
-            f"{label} {base:.4g} -> {observed:.4g}; worsened by {max(worsening, 0.0) + 0.0:.4g}, "
-            f"allowed {threshold:g}",
+            verdict,
+            f"{head}; worsened by {max(worsening, 0.0) + 0.0:.4g}, allowed {threshold:g} "
+            "(point estimate)",
             **common,
         )
-    if (
-        gate.aggregate is GateAggregate.mean
-        and comparison is not None
-        and not comparison.significant
-    ):
+
+    if interval is None or interval.n < 2:
         return Verdict(
-            GateVerdict.passed,
-            f"mean worsened by {worsening:.4g} (> {threshold:g}) but the paired 95% CI "
-            f"[{comparison.ci95_low:.4g}, {comparison.ci95_high:.4g}] includes 0 "
-            f"over {comparison.paired_n} items; treated as noise",
-            **common,
+            GateVerdict.inconclusive, f"{head}; too few paired items for an interval", **common
         )
+    lo, hi = (
+        (-interval.ci_high, -interval.ci_low)
+        if higher_is_better
+        else (
+            interval.ci_low,
+            interval.ci_high,
+        )
+    )
+    pct = f"{interval.confidence * 100:.4g}%"
+    span = f"worsening {worsening + 0.0:.4g}, {pct} CI [{lo:.4g}, {hi:.4g}] over {interval.n} items"
+    if lo > threshold:
+        return Verdict(
+            GateVerdict.failed, f"{head}; {span} is entirely above allowed {threshold:g}", **common
+        )
+    if hi <= threshold:
+        return Verdict(
+            GateVerdict.passed, f"{head}; {span} is within allowed {threshold:g}", **common
+        )
+    half_width = (hi - lo) / 2
+    margin = abs(threshold - worsening)
+    more = ""
+    if margin > 0:
+        needed = math.ceil(interval.n * (half_width / margin) ** 2)
+        more = f"; roughly {needed} items would decide it"
     return Verdict(
-        GateVerdict.failed,
-        f"{label} {base:.4g} -> {observed:.4g}; worsened by {worsening:.4g}, allowed {threshold:g}",
+        GateVerdict.inconclusive,
+        f"{head}; {span} straddles allowed {threshold:g}{more}",
         **common,
     )
 
@@ -290,7 +348,9 @@ def find_baseline(db: Session, run: EvalRun, evaluator_version_id: uuid.UUID) ->
     )
 
 
-def evaluate_gate(db: Session, gate: RegressionGate, run: EvalRun, body: CheckIn) -> GateCheck:
+def evaluate_gate(
+    db: Session, gate: RegressionGate, run: EvalRun, body: CheckIn, confidence: float = 0.95
+) -> GateCheck:
     if run.status not in FINISHED:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -309,7 +369,7 @@ def evaluate_gate(db: Session, gate: RegressionGate, run: EvalRun, body: CheckIn
     else:
         cand = {m.evaluator_version_id: m for m in run_metrics(db, run).evaluators}
         base_m: EvaluatorMetrics | None = None
-        comparison: EvaluatorComparison | None = None
+        interval: PairedDelta | None = None
         if gate.comparator is GateComparator.max_drop_vs_baseline:
             baseline_id = body.baseline_run_id or run.baseline_run_id
             baseline_run = (
@@ -318,17 +378,19 @@ def evaluate_gate(db: Session, gate: RegressionGate, run: EvalRun, body: CheckIn
                 else find_baseline(db, run, gate.evaluator_version_id)
             )
             if baseline_run is not None:
-                cmp = compare_runs(db, run, baseline_run)
-                comparison = next(
+                cmp = compare_runs(db, run, baseline_run)  # validates comparability
+                base_m = next(
                     (
-                        c
+                        c.baseline
                         for c in cmp.evaluators
                         if c.candidate.evaluator_version_id == gate.evaluator_version_id
                     ),
                     None,
                 )
-                base_m = comparison.baseline if comparison else None
-        result = decide(gate, hib, cand.get(gate.evaluator_version_id), base_m, comparison)
+                interval = paired_stats(
+                    db, run, baseline_run, gate.evaluator_version_id, confidence
+                )
+        result = decide(gate, hib, cand.get(gate.evaluator_version_id), base_m, interval)
 
     check = GateCheck(
         gate_id=gate.id,
@@ -436,7 +498,10 @@ def check_all_gates(
             .order_by(RegressionGate.name)
         )
     )
-    checks = [(evaluate_gate(db, g, run, body), g) for g in gates]
+    # Bonferroni: with m gates, each interval is at 1 - 0.05/m so the chance of any false
+    # fail across the whole PR stays at 5% (5 gates at 95% each would be ~23%).
+    confidence = 1 - 0.05 / max(1, len(gates))
+    checks = [(evaluate_gate(db, g, run, body, confidence), g) for g in gates]
     db.commit()
     verdicts = {c.verdict for c, _ in checks}
     if GateVerdict.failed in verdicts:

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, aliased
 
@@ -26,7 +26,7 @@ from forgeeval.db.models import (
     Score,
 )
 from forgeeval.db.session import get_session
-from forgeeval.stats import direction, paired_delta
+from forgeeval.stats import PairedDelta, direction, paired_delta
 
 router = APIRouter(prefix="/v1/runs", tags=["compare"])
 
@@ -67,6 +67,10 @@ class EvaluatorComparison(BaseModel):
     delta_mean: float | None
     ci95_low: float | None
     ci95_high: float | None
+    p_value: float | None
+    method: str | None = Field(
+        None, description="mcnemar-newcombe (binary scores) or paired-t; see forgeeval/stats.py"
+    )
     delta_pass_rate: float | None
     significant: bool
     direction: str
@@ -189,6 +193,18 @@ def _pairs(db: Session, run: EvalRun, baseline: EvalRun) -> dict[uuid.UUID, list
     return out
 
 
+def paired_stats(
+    db: Session,
+    run: EvalRun,
+    baseline: EvalRun,
+    evaluator_version_id: uuid.UUID,
+    confidence: float = 0.95,
+) -> PairedDelta | None:
+    """Paired difference for one evaluator version at the requested confidence level."""
+    evp = _pairs(db, run, baseline).get(evaluator_version_id, [])
+    return paired_delta([(p.baseline, p.candidate) for p in evp], confidence)
+
+
 def compare_runs(db: Session, run: EvalRun, baseline: EvalRun) -> Comparison:
     if run.id == baseline.id:
         raise HTTPException(
@@ -220,8 +236,10 @@ def compare_runs(db: Session, run: EvalRun, baseline: EvalRun) -> Comparison:
                 baseline=b,
                 paired_n=len(evp),
                 delta_mean=delta.mean if delta else None,
-                ci95_low=delta.ci95_low if delta else None,
-                ci95_high=delta.ci95_high if delta else None,
+                ci95_low=delta.ci_low if delta else None,
+                ci95_high=delta.ci_high if delta else None,
+                p_value=delta.p_value if delta else None,
+                method=delta.method if delta else None,
                 delta_pass_rate=(
                     c.pass_rate - b.pass_rate
                     if c.pass_rate is not None and b.pass_rate is not None
