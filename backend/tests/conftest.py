@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from forgeeval.db.models import Project
+    from forgeeval.queue import RedisStreamQueue
 
 ADMIN_URL = os.environ.get(
     "TEST_ADMIN_DATABASE_URL", "postgresql+psycopg://forgeeval:forgeeval@localhost:5433/forgeeval"
@@ -84,3 +85,19 @@ def make_client(db: "Session", project: "Project") -> "Callable[..., TestClient]
         return TestClient(app, headers={"Authorization": f"Bearer {key}"})
 
     return build
+
+
+@pytest.fixture
+def redis_queue() -> Iterator["RedisStreamQueue"]:
+    """A real Redis Streams queue on a throwaway stream (compose Redis on localhost:6379)."""
+    import uuid
+
+    import redis
+
+    from forgeeval.queue import RedisStreamQueue
+
+    client = redis.Redis.from_url(os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15"))
+    q = RedisStreamQueue(client, stream=f"test:{uuid.uuid4().hex}", visibility_timeout=0.2)
+    yield q
+    client.delete(q.stream)
+    client.close()
