@@ -1,6 +1,8 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import quote
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +10,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), extra="ignore")
 
     database_url: str = "postgresql+psycopg://forgeeval:forgeeval@localhost:5433/forgeeval"
+    # In ECS the RDS-managed secret is injected as separate parts; when DB_HOST is set they
+    # take precedence over DATABASE_URL.
+    db_host: str | None = None
+    db_port: int = 5432
+    db_name: str = "forgeeval"
+    db_username: str | None = None
+    db_password: str | None = None
     redis_url: str = "redis://localhost:6379/0"
     queue_stream: str = "forgeeval:eval-jobs"
 
@@ -31,6 +40,15 @@ class Settings(BaseSettings):
     max_attempts: int = 5
     lease_seconds: float = 120.0
     requeue_stale_after_seconds: float = 600.0
+
+    @model_validator(mode="after")
+    def _database_url_from_parts(self) -> "Settings":
+        if self.db_host:
+            if not (self.db_username and self.db_password):
+                raise ValueError("DB_HOST is set, so DB_USERNAME and DB_PASSWORD are required")
+            user, password = quote(self.db_username, safe=""), quote(self.db_password, safe="")
+            self.database_url = f"postgresql+psycopg://{user}:{password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        return self
 
 
 @lru_cache
