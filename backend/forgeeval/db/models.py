@@ -398,6 +398,7 @@ class DeadLetter(CreatedAt, Base):
 
 class RegressionGate(CreatedAt, Base):
     __tablename__ = "regression_gates"
+    __table_args__ = (UniqueConstraint("project_id", "name"),)
     id: Mapped[uuid.UUID] = pk()
     project_id: Mapped[uuid.UUID] = fk("projects.id", ondelete="CASCADE")
     name: Mapped[str] = mapped_column(Text)
@@ -419,6 +420,7 @@ class GateCheck(CreatedAt, Base):
     baseline: Mapped[Decimal | None] = mapped_column(Numeric)
     delta: Mapped[Decimal | None] = mapped_column(Numeric)
     verdict: Mapped[GateVerdict] = mapped_column(pg_enum(GateVerdict))
+    reason: Mapped[str] = mapped_column(Text, server_default="")
     repo: Mapped[str | None] = mapped_column(Text)
     pr_number: Mapped[int | None] = mapped_column(Integer)
     commit_sha: Mapped[str | None] = mapped_column(Text)

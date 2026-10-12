@@ -129,7 +129,7 @@ def _resolve_prompt_version(db: Session, project_id: uuid.UUID, ref: VersionRef)
     return pv
 
 
-def _resolve_evaluator_version(
+def resolve_evaluator_version(
     db: Session, project_id: uuid.UUID, ref: VersionRef
 ) -> EvaluatorVersion:
     q = (
@@ -207,7 +207,7 @@ def create_run(
     pv = _resolve_prompt_version(db, ctx.project_id, body.prompt)
     evs = {
         ev.id: ev
-        for ev in (_resolve_evaluator_version(db, ctx.project_id, r) for r in body.evaluators)
+        for ev in (resolve_evaluator_version(db, ctx.project_id, r) for r in body.evaluators)
     }
     if len(evs) != len(body.evaluators):
         raise _unprocessable("The same evaluator version is listed twice.")

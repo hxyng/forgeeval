@@ -1,6 +1,229 @@
 {
   "components": {
     "schemas": {
+      "CheckAllOut": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CheckOut"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/GateVerdict"
+          }
+        },
+        "required": [
+          "verdict",
+          "checks"
+        ],
+        "title": "CheckAllOut",
+        "type": "object"
+      },
+      "CheckIn": {
+        "properties": {
+          "baseline_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Defaults to the run's baseline, else the latest usable run of the same prompt over the same dataset version",
+            "title": "Baseline Run Id"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "acme/support-bot"
+            ],
+            "title": "Repo"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "CheckIn",
+        "type": "object"
+      },
+      "CheckOut": {
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/GateAggregate"
+          },
+          "baseline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline"
+          },
+          "baseline_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Run Id"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
+          "comparator": {
+            "$ref": "#/components/schemas/GateComparator"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta"
+          },
+          "gate": {
+            "title": "Gate",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "observed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/GateVerdict"
+          }
+        },
+        "required": [
+          "id",
+          "gate",
+          "verdict",
+          "reason",
+          "aggregate",
+          "comparator",
+          "threshold",
+          "observed",
+          "baseline",
+          "delta",
+          "run_id",
+          "baseline_run_id",
+          "repo",
+          "pr_number",
+          "commit_sha",
+          "created_at"
+        ],
+        "title": "CheckOut",
+        "type": "object"
+      },
       "Comparison": {
         "properties": {
           "baseline_run_id": {
@@ -618,6 +841,165 @@
         ],
         "title": "FromTraces",
         "type": "object"
+      },
+      "GateAggregate": {
+        "enum": [
+          "mean",
+          "p50",
+          "p95",
+          "pass_rate"
+        ],
+        "title": "GateAggregate",
+        "type": "string"
+      },
+      "GateComparator": {
+        "enum": [
+          "min_absolute",
+          "max_drop_vs_baseline"
+        ],
+        "title": "GateComparator",
+        "type": "string"
+      },
+      "GateIn": {
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/GateAggregate"
+          },
+          "comparator": {
+            "$ref": "#/components/schemas/GateComparator"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "evaluator": {
+            "$ref": "#/components/schemas/VersionRef"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "required": [
+          "name",
+          "evaluator",
+          "aggregate",
+          "comparator",
+          "threshold"
+        ],
+        "title": "GateIn",
+        "type": "object"
+      },
+      "GateOut": {
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/GateAggregate"
+          },
+          "comparator": {
+            "$ref": "#/components/schemas/GateComparator"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "evaluator": {
+            "title": "Evaluator",
+            "type": "string"
+          },
+          "evaluator_version": {
+            "title": "Evaluator Version",
+            "type": "integer"
+          },
+          "evaluator_version_id": {
+            "format": "uuid",
+            "title": "Evaluator Version Id",
+            "type": "string"
+          },
+          "higher_is_better": {
+            "title": "Higher Is Better",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "evaluator",
+          "evaluator_version",
+          "evaluator_version_id",
+          "higher_is_better",
+          "aggregate",
+          "comparator",
+          "threshold",
+          "enabled"
+        ],
+        "title": "GateOut",
+        "type": "object"
+      },
+      "GatePatch": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "title": "GatePatch",
+        "type": "object"
+      },
+      "GateVerdict": {
+        "enum": [
+          "pass",
+          "fail",
+          "inconclusive"
+        ],
+        "title": "GateVerdict",
+        "type": "string"
       },
       "HTTPValidationError": {
         "properties": {
@@ -2563,6 +2945,377 @@
         "summary": "Create Evaluator Version",
         "tags": [
           "registry"
+        ]
+      }
+    },
+    "/v1/gates": {
+      "get": {
+        "operationId": "list_gates_v1_gates_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GateOut"
+                  },
+                  "title": "Response List Gates V1 Gates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Gates",
+        "tags": [
+          "gates"
+        ]
+      },
+      "post": {
+        "operationId": "create_gate_v1_gates_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Gate",
+        "tags": [
+          "gates"
+        ]
+      }
+    },
+    "/v1/gates/{name}": {
+      "patch": {
+        "operationId": "update_gate_v1_gates__name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Gate",
+        "tags": [
+          "gates"
+        ]
+      }
+    },
+    "/v1/gates/{name}/check": {
+      "post": {
+        "operationId": "check_gate_v1_gates__name__check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Gate",
+        "tags": [
+          "gates"
+        ]
+      }
+    },
+    "/v1/gates/{name}/checks": {
+      "get": {
+        "operationId": "list_checks_v1_gates__name__checks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CheckOut"
+                  },
+                  "title": "Response List Checks V1 Gates  Name  Checks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Checks",
+        "tags": [
+          "gates"
+        ]
+      }
+    },
+    "/v1/gates:check": {
+      "post": {
+        "description": "Check every enabled gate whose evaluator version the run used. Overall verdict: fail if\nany gate fails, else inconclusive if any is inconclusive or none apply, else pass.",
+        "operationId": "check_all_gates_v1_gates_check_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckAllOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check All Gates",
+        "tags": [
+          "gates"
         ]
       }
     },

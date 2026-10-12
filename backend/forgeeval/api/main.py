@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from forgeeval.api import compare, registry, runs, traces
+from forgeeval.api import compare, gates, registry, runs, traces
 from forgeeval.auth import AuthContext, authenticate
 from forgeeval.db.session import get_session
 
@@ -15,6 +15,7 @@ app.include_router(traces.router)
 app.include_router(registry.router)
 app.include_router(runs.router)
 app.include_router(compare.router)
+app.include_router(gates.router)
 
 DbSession = Annotated[Session, Depends(get_session)]
 
