@@ -64,6 +64,30 @@ the job summary.
 the docker-compose stack, seeds [`examples/triage`](examples/triage) (30 tickets, an accuracy gate
 and a p95 latency gate), expects `fake/oracle` to pass and `fake/echo` to be blocked.
 
+## Web console
+
+[`web/`](web/) is a React + TypeScript console for reading evaluation results: sign in with a project
+API key, list runs, open a run to see its metrics and the exact cases that failed (input, expected,
+actual output, evaluator rationale).
+
+```bash
+docker compose up -d --build --wait     # includes the console on http://localhost:3000
+```
+
+Paste an API key (see above) on the sign-in page. The key stays in `sessionStorage` for that tab only.
+
+Develop it with the Vite dev server, which proxies `/v1` to the API on `localhost:8000`:
+
+```bash
+cd web
+pnpm install
+pnpm dev            # http://localhost:5173
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
+```
+
+The API client is typed from [`docs/openapi.json`](docs/openapi.json). After the API contract changes,
+run `pnpm gen:api` and commit `web/src/api/schema.d.ts`; CI fails when it is stale (`pnpm check:api`).
+
 ## Layout
 
 | Path | What lives there |
@@ -73,5 +97,5 @@ and a p95 latency gate), expects `fake/oracle` to pass and `fake/echo` to be blo
 | `backend/forgeeval/db` | SQLAlchemy models and session |
 | `backend/migrations` | Alembic migrations |
 | `sdk/` | Python client SDK: trace capture, local PII redaction, batching, retries |
-| `web/` | React + TypeScript console (later layer) |
+| `web/` | React + TypeScript web console: runs, metrics, failing cases |
 | `infra/` | Terraform for AWS: ECS, RDS, SQS, S3 (later layer) |
