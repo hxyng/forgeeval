@@ -1,6 +1,63 @@
 {
   "components": {
     "schemas": {
+      "Comparison": {
+        "properties": {
+          "baseline_run_id": {
+            "format": "uuid",
+            "title": "Baseline Run Id",
+            "type": "string"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "evaluators": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluatorComparison"
+            },
+            "title": "Evaluators",
+            "type": "array"
+          },
+          "newly_failing": {
+            "items": {
+              "$ref": "#/components/schemas/Flip"
+            },
+            "title": "Newly Failing",
+            "type": "array"
+          },
+          "newly_passing": {
+            "items": {
+              "$ref": "#/components/schemas/Flip"
+            },
+            "title": "Newly Passing",
+            "type": "array"
+          },
+          "not_comparable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Not Comparable",
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "baseline_run_id",
+          "complete",
+          "evaluators",
+          "not_comparable",
+          "newly_failing",
+          "newly_passing"
+        ],
+        "title": "Comparison",
+        "type": "object"
+      },
       "DatasetIn": {
         "properties": {
           "description": {
@@ -153,6 +210,100 @@
         "title": "DatasetVersionOut",
         "type": "object"
       },
+      "EvaluatorComparison": {
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/EvaluatorMetrics"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/EvaluatorMetrics"
+          },
+          "ci95_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci95 High"
+          },
+          "ci95_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci95 Low"
+          },
+          "delta_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Mean"
+          },
+          "delta_pass_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Pass Rate"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "evaluator": {
+            "title": "Evaluator",
+            "type": "string"
+          },
+          "higher_is_better": {
+            "title": "Higher Is Better",
+            "type": "boolean"
+          },
+          "paired_n": {
+            "title": "Paired N",
+            "type": "integer"
+          },
+          "significant": {
+            "title": "Significant",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "evaluator",
+          "version",
+          "higher_is_better",
+          "candidate",
+          "baseline",
+          "paired_n",
+          "delta_mean",
+          "ci95_low",
+          "ci95_high",
+          "delta_pass_rate",
+          "significant",
+          "direction"
+        ],
+        "title": "EvaluatorComparison",
+        "type": "object"
+      },
       "EvaluatorIn": {
         "properties": {
           "higher_is_better": {
@@ -194,6 +345,97 @@
         ],
         "title": "EvaluatorKind",
         "type": "string"
+      },
+      "EvaluatorMetrics": {
+        "properties": {
+          "evaluator": {
+            "title": "Evaluator",
+            "type": "string"
+          },
+          "evaluator_version_id": {
+            "format": "uuid",
+            "title": "Evaluator Version Id",
+            "type": "string"
+          },
+          "higher_is_better": {
+            "title": "Higher Is Better",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EvaluatorKind"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50"
+          },
+          "p95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95"
+          },
+          "pass_n": {
+            "title": "Pass N",
+            "type": "integer"
+          },
+          "pass_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rate"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "evaluator",
+          "version",
+          "evaluator_version_id",
+          "kind",
+          "higher_is_better",
+          "n",
+          "mean",
+          "p50",
+          "p95",
+          "pass_rate",
+          "pass_n"
+        ],
+        "title": "EvaluatorMetrics",
+        "type": "object"
       },
       "EvaluatorOut": {
         "properties": {
@@ -313,6 +555,35 @@
           "created_at"
         ],
         "title": "EvaluatorVersionOut",
+        "type": "object"
+      },
+      "Flip": {
+        "properties": {
+          "baseline_value": {
+            "title": "Baseline Value",
+            "type": "number"
+          },
+          "candidate_value": {
+            "title": "Candidate Value",
+            "type": "number"
+          },
+          "dataset_item_id": {
+            "format": "uuid",
+            "title": "Dataset Item Id",
+            "type": "string"
+          },
+          "evaluator": {
+            "title": "Evaluator",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataset_item_id",
+          "evaluator",
+          "baseline_value",
+          "candidate_value"
+        ],
+        "title": "Flip",
         "type": "object"
       },
       "FromTraces": {
@@ -792,6 +1063,37 @@
           "evaluators"
         ],
         "title": "RunIn",
+        "type": "object"
+      },
+      "RunMetrics": {
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "evaluators": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluatorMetrics"
+            },
+            "title": "Evaluators",
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "complete",
+          "evaluators"
+        ],
+        "title": "RunMetrics",
         "type": "object"
       },
       "RunOut": {
@@ -2699,6 +3001,143 @@
         "summary": "Cancel Run",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/compare": {
+      "get": {
+        "description": "Compare against `baseline_run_id`, or the baseline recorded on the run.",
+        "operationId": "compare_v1_runs__run_id__compare_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "baseline_run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Baseline Run Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comparison"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare",
+        "tags": [
+          "compare"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/metrics": {
+      "get": {
+        "description": "Per evaluator: score count, mean, p50, p95 and pass rate.",
+        "operationId": "get_metrics_v1_runs__run_id__metrics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunMetrics"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Metrics",
+        "tags": [
+          "compare"
         ]
       }
     },
