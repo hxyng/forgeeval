@@ -1,0 +1,496 @@
+<title>ForgeEval Data Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: technical spec sheet. Sticky section index on the left, one reading column, wide diagrams scroll inside their own frames. */
+:root{
+  --bg:#F5F6F8; --surface:#FFFFFF; --ink:#151A24; --muted:#5B6474; --line:#DDE1E8;
+  --accent:#2E47C2; --accent-soft:#E7EBFB; --pk:#A3620A; --pk-soft:#FBF0DD; --fk:#2E47C2; --uk:#0F7A63; --uk-soft:#DDF3EC;
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --body:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10131A; --surface:#171B24; --ink:#E6E9F0; --muted:#98A1B3; --line:#2A303D;
+  --accent:#8FA2FF; --accent-soft:#1F2747; --pk:#F0B45A; --pk-soft:#3A2C14; --fk:#8FA2FF; --uk:#5CD1B0; --uk-soft:#123329; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10131A; --surface:#171B24; --ink:#E6E9F0; --muted:#98A1B3; --line:#2A303D;
+  --accent:#8FA2FF; --accent-soft:#1F2747; --pk:#F0B45A; --pk-soft:#3A2C14; --fk:#8FA2FF; --uk:#5CD1B0; --uk-soft:#123329; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:20px;padding-block:40px 80px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:48px}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:13px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:4px;counter-reset:s}
+nav.toc a{color:var(--muted);text-decoration:none;display:block;padding:3px 0}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--accent)}
+nav.toc .label{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+main{min-width:0;display:grid;gap:64px}
+header.hero{display:grid;gap:14px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(34px,5vw,52px);line-height:1.05;margin:0;text-wrap:balance;letter-spacing:-.01em}
+h2{font-family:var(--display);font-weight:700;font-size:28px;line-height:1.15;margin:0;text-wrap:balance}
+h3{font-family:var(--display);font-weight:500;font-size:19px;margin:0}
+p{margin:0;max-width:68ch}
+.lede{font-size:17px;color:var(--muted);max-width:64ch}
+section{display:grid;gap:20px;scroll-margin-top:24px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 20px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.meta b{color:var(--ink);font-weight:500}
+code,.mono{font-family:var(--mono);font-size:.88em}
+p code,li code,td code{background:var(--accent-soft);padding:1px 5px;border-radius:4px}
+.frame{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow-x:auto;padding:20px}
+.frame pre.mermaid{margin:0;min-width:640px;background:transparent}
+.frame.erd pre.mermaid{min-width:980px}
+.cap{font-size:13px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.note{border-top:2px solid var(--ink);padding-top:12px;display:grid;gap:6px;min-width:0}
+.note h3{font-size:16px}
+.note p{font-size:14px;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--line)}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td.col{font-family:var(--mono);font-size:13px;white-space:nowrap}
+td.type{font-family:var(--mono);font-size:12.5px;color:var(--muted);white-space:nowrap}
+.tbl{overflow-x:auto;min-width:0}
+.domain{display:grid;gap:18px}
+.domain-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:8px}
+.domain-head span{font-size:13px;color:var(--muted)}
+.entity{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:10px;min-width:0}
+.entity-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline}
+.entity-name{font-family:var(--mono);font-weight:500;font-size:15px}
+.entity p{font-size:14px;color:var(--muted)}
+.tag{font-family:var(--mono);font-size:10.5px;font-weight:500;padding:1px 6px;border-radius:4px;margin-right:4px;display:inline-block;letter-spacing:.03em}
+.tag.pk{background:var(--pk-soft);color:var(--pk)}
+.tag.fk{background:var(--accent-soft);color:var(--fk)}
+.tag.uk{background:var(--uk-soft);color:var(--uk)}
+.tag.nn{border:1px solid var(--line);color:var(--muted)}
+.idx{font-family:var(--mono);font-size:12px;color:var(--muted);display:grid;gap:2px}
+.idx div::before{content:"idx  ";color:var(--accent)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--muted);align-items:center}
+ul.plain{margin:0;padding-left:18px;display:grid;gap:6px;max-width:72ch}
+@media (max-width:900px){
+  .wrap{grid-template-columns:minmax(0,1fr);gap:28px;padding-inline:16px;padding-block:28px 64px}
+  nav.toc{position:static}
+  nav.toc ol{display:flex;flex-wrap:wrap;gap:6px 14px}
+  .grid3,.grid2{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Sections">
+  <div class="label">ForgeEval · schema v1</div>
+  <ol>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#infra">Infrastructure</a></li>
+    <li><a href="#flow">Ingest → score flow</a></li>
+    <li><a href="#erd">ERD</a></li>
+    <li><a href="#entities">Table reference</a></li>
+    <li><a href="#lifecycle">Job lifecycle</a></li>
+    <li><a href="#rules">Integrity rules</a></li>
+    <li><a href="#scale">At 10× scale</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero" id="overview">
+  <div class="eyebrow">Week 1 deliverable · design the contract and failure model</div>
+  <h1>ForgeEval data model &amp; infrastructure</h1>
+  <p class="lede">ForgeEval captures LLM application traces, replays them against new prompt or model versions, scores the results, and blocks a pull request when a metric regresses. This page covers the normalized PostgreSQL schema, the ERD, and the single-region AWS deployment behind it.</p>
+  <div class="meta">
+    <span><b>21</b> tables</span><span><b>5</b> domains</span><span>Postgres 16 · FastAPI · Redis Streams → SQS</span><span>ECS Fargate · RDS · S3 · Terraform</span><span>Draft · Oct 11, 2026</span>
+  </div>
+</header>
+
+<section>
+  <div class="grid3">
+    <div class="note"><h3>Versions are immutable</h3><p>Prompts, datasets and evaluators get a new <code>*_versions</code> row on every change. Runs point at exact versions, so a score from March can be reproduced in October.</p></div>
+    <div class="note"><h3>Ingest is separate from scoring</h3><p>The API only writes traces and enqueues work. Workers do the slow, failure-prone scoring. One <code>run_items</code> row per dataset item is the unit of retry.</p></div>
+    <div class="note"><h3>JSONB only where shape varies</h3><p>Model inputs/outputs, span attributes and evaluator configs are JSONB. Anything filtered, joined or aggregated (latency, cost, status, tokens) is a typed column.</p></div>
+  </div>
+</section>
+
+<section id="infra">
+  <div class="eyebrow">Infrastructure</div>
+  <h2>Single-region deployment on AWS</h2>
+  <p>A simpler production story than Kubernetes: two ECS Fargate services behind one ALB, RDS for state, SQS with a dead-letter queue for jobs, S3 for large payloads. Everything is declared in Terraform and shipped by GitHub Actions. Locally, the same services run under Docker Compose with Redis Streams standing in for SQS and MinIO for S3.</p>
+  <div class="frame">
+<pre class="mermaid">
+flowchart LR
+  subgraph Clients
+    APP["Customer LLM app<br/>+ ForgeEval SDK<br/>redact · batch · retry"]
+    WEB["Web console<br/>React + TypeScript"]
+    GHA["GitHub Action<br/>regression gate"]
+  end
+
+  subgraph AWS["AWS · us-east-1 · VPC"]
+    subgraph PUB["Public subnets"]
+      ALB["Application Load Balancer<br/>TLS · WAF"]
+    end
+    subgraph PRIV["Private subnets"]
+      API["ECS service: api<br/>FastAPI · auth · idempotency"]
+      WRK["ECS service: worker<br/>rules · LLM rubric · retrieval"]
+      OTEL["OTel Collector<br/>sidecar"]
+    end
+    subgraph DATA["Data tier"]
+      RDS[("RDS PostgreSQL 16<br/>Multi-AZ")]
+      SQS[["SQS eval-jobs"]]
+      DLQ[["SQS eval-jobs-dlq"]]
+      S3[("S3<br/>payloads · reports")]
+    end
+    SM["Secrets Manager<br/>DB creds · judge-model keys"]
+    CW["CloudWatch / X-Ray<br/>dashboards · alarms"]
+  end
+
+  LLM["Judge model provider"]
+
+  APP -- "POST /v1/traces:batch" --> ALB
+  WEB --> ALB
+  GHA -- "POST /v1/runs · GET /v1/gates/:id" --> ALB
+  ALB --> API
+  API --> RDS
+  API -- "payload > 64 KB" --> S3
+  API -- "enqueue run_item" --> SQS
+  SQS --> WRK
+  SQS -. "maxReceiveCount = 5" .-> DLQ
+  WRK --> RDS
+  WRK --> S3
+  WRK -- "rubric scoring" --> LLM
+  API -.-> SM
+  WRK -.-> SM
+  API -.-> OTEL
+  WRK -.-> OTEL
+  OTEL --> CW
+</pre>
+  </div>
+  <div class="tbl frame" style="padding:0">
+    <table>
+      <thead><tr><th>Component</th><th>Local (Docker Compose)</th><th>Cloud (Terraform)</th><th>Why it exists</th></tr></thead>
+      <tbody>
+        <tr><td>API</td><td class="mono">api · uvicorn</td><td class="mono">ECS Fargate, 2 tasks min</td><td>Auth, validation, idempotent ingest, run orchestration, OpenAPI contract</td></tr>
+        <tr><td>Workers</td><td class="mono">worker · 2 replicas</td><td class="mono">ECS Fargate, scale on queue depth</td><td>Scoring is slow and calls external models; isolating it keeps ingest latency flat</td></tr>
+        <tr><td>Database</td><td class="mono">postgres:16</td><td class="mono">RDS Postgres, Multi-AZ, PITR</td><td>Source of truth for traces, versions, runs and scores; Alembic migrations</td></tr>
+        <tr><td>Job queue</td><td class="mono">redis:7 Streams + consumer group</td><td class="mono">SQS standard + DLQ</td><td>At-least-once delivery; workers dedupe on <code>run_items.id</code>. The ADR records this tradeoff</td></tr>
+        <tr><td>Object storage</td><td class="mono">minio</td><td class="mono">S3, SSE-KMS, lifecycle to IA at 30 d</td><td>Large prompts/outputs and exported reports stay out of Postgres rows</td></tr>
+        <tr><td>Telemetry</td><td class="mono">otel-collector + Jaeger</td><td class="mono">ADOT collector → CloudWatch, X-Ray</td><td>One trace id across API, queue, worker and DB spans; p50/p95, queue depth, error rate</td></tr>
+        <tr><td>Delivery</td><td colspan="2" class="mono">GitHub Actions: lint · mypy/tsc · pytest · Playwright · build · Trivy scan · terraform plan/apply · ECS deploy</td><td>Every release is reproducible and can roll back to the previous task definition</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="flow">
+  <div class="eyebrow">Sequence</div>
+  <h2>Ingest → queue → score</h2>
+  <p>The hot path returns as soon as traces are durable. A replay or CI run fans out into one job per dataset item; the run finishes when every item has succeeded or been dead-lettered.</p>
+  <div class="frame">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant SDK as SDK / GitHub Action
+  participant API as API (FastAPI)
+  participant DB as PostgreSQL
+  participant Q as SQS eval-jobs
+  participant W as Worker
+  participant J as Judge model
+
+  SDK->>API: POST /v1/traces:batch (Idempotency-Key)
+  API->>DB: INSERT traces ON CONFLICT (project_id, idempotency_key) DO NOTHING
+  API-->>SDK: 202 Accepted {accepted, duplicates}
+
+  SDK->>API: POST /v1/runs {dataset_version, prompt_version, evaluators, baseline_run}
+  API->>DB: BEGIN · insert eval_runs + run_items (status=queued) · COMMIT
+  API->>Q: SendMessageBatch(run_item ids)
+  API-->>SDK: 201 {run_id}
+
+  loop each message
+    Q->>W: receive (visibility timeout 120s)
+    W->>DB: UPDATE run_items SET status=leased, attempt=attempt+1 WHERE id=$1 AND status IN (queued, retry_wait)
+    W->>J: generate with candidate prompt, then rubric score
+    W->>DB: upsert scores (run_item_id, evaluator_version_id) · status=succeeded
+    W->>Q: DeleteMessage
+  end
+
+  SDK->>API: GET /v1/gates/{gate_id}/check?run_id=…
+  API->>DB: aggregate scores vs baseline · insert gate_checks
+  API-->>SDK: {verdict: fail, metric: rubric_helpfulness, delta: -0.07}
+</pre>
+  </div>
+</section>
+
+<section id="erd">
+  <div class="eyebrow">Entity-relationship diagram</div>
+  <h2>ERD</h2>
+  <p>Keys and the columns that drive relationships are shown here. Full column lists are in the table reference below.</p>
+  <div class="legend"><span class="tag pk">PK</span>primary key <span class="tag fk">FK</span>foreign key <span class="tag uk">UK</span>unique (alone or composite)</div>
+  <div class="frame erd">
+<pre class="mermaid">
+erDiagram
+  organizations ||--o{ memberships : has
+  users ||--o{ memberships : holds
+  organizations ||--o{ projects : owns
+  projects ||--o{ api_keys : authenticates
+  projects ||--o{ prompt_versions : versions
+  projects ||--o{ traces : receives
+  prompt_versions ||--o{ traces : produced
+  traces ||--o{ spans : contains
+  spans |o--o{ spans : parent_of
+  projects ||--o{ datasets : owns
+  datasets ||--|{ dataset_versions : snapshots
+  dataset_versions ||--|{ dataset_items : contains
+  traces |o--o{ dataset_items : promoted_to
+  projects ||--o{ evaluators : owns
+  evaluators ||--|{ evaluator_versions : versions
+  dataset_versions ||--o{ eval_runs : evaluated_in
+  prompt_versions ||--o{ eval_runs : candidate_in
+  eval_runs |o--o{ eval_runs : baseline_for
+  users |o--o{ eval_runs : started
+  eval_runs ||--|{ run_evaluators : uses
+  evaluator_versions ||--o{ run_evaluators : applied_in
+  eval_runs ||--|{ run_items : fans_out
+  dataset_items ||--o{ run_items : executed_as
+  run_items ||--o{ scores : scored_by
+  evaluator_versions ||--o{ scores : produced
+  run_items ||--o{ dead_letters : failed_to
+  projects ||--o{ regression_gates : defines
+  evaluator_versions ||--o{ regression_gates : measures
+  regression_gates ||--o{ gate_checks : evaluates
+  eval_runs ||--o{ gate_checks : checked_by
+  eval_runs ||--o{ reports : exports
+
+  organizations { uuid id PK
+    text slug UK }
+  users { uuid id PK
+    citext email UK }
+  memberships { uuid org_id PK,FK
+    uuid user_id PK,FK
+    member_role role }
+  projects { uuid id PK
+    uuid org_id FK,UK
+    text slug UK }
+  api_keys { uuid id PK
+    uuid project_id FK
+    text key_prefix UK
+    bytea key_hash }
+  prompt_versions { uuid id PK
+    uuid project_id FK,UK
+    text name UK
+    int version UK }
+  traces { uuid id PK
+    uuid project_id FK,UK
+    text idempotency_key UK
+    uuid prompt_version_id FK
+    timestamptz started_at }
+  spans { uuid id PK
+    uuid trace_id FK
+    uuid parent_span_id FK
+    span_kind kind }
+  datasets { uuid id PK
+    uuid project_id FK
+    text name UK }
+  dataset_versions { uuid id PK
+    uuid dataset_id FK,UK
+    int version UK
+    text content_hash }
+  dataset_items { uuid id PK
+    uuid dataset_version_id FK
+    uuid source_trace_id FK }
+  evaluators { uuid id PK
+    uuid project_id FK
+    evaluator_kind kind }
+  evaluator_versions { uuid id PK
+    uuid evaluator_id FK,UK
+    int version UK
+    text config_hash }
+  eval_runs { uuid id PK
+    uuid dataset_version_id FK
+    uuid prompt_version_id FK
+    uuid baseline_run_id FK
+    run_status status }
+  run_evaluators { uuid run_id PK,FK
+    uuid evaluator_version_id PK,FK }
+  run_items { uuid id PK
+    uuid run_id FK,UK
+    uuid dataset_item_id FK,UK
+    item_status status
+    int attempt }
+  scores { uuid id PK
+    uuid run_item_id FK,UK
+    uuid evaluator_version_id FK,UK
+    numeric value }
+  dead_letters { uuid id PK
+    uuid run_item_id FK
+    text error_class }
+  regression_gates { uuid id PK
+    uuid project_id FK
+    uuid evaluator_version_id FK
+    numeric threshold }
+  gate_checks { uuid id PK
+    uuid gate_id FK
+    uuid run_id FK
+    gate_verdict verdict }
+  reports { uuid id PK
+    uuid run_id FK
+    text s3_key }
+</pre>
+  </div>
+  <p class="cap">Crow's foot: <code>||--o{</code> one to zero-or-many, <code>||--|{</code> one to one-or-many, <code>|o--o{</code> optional parent.</p>
+</section>
+
+<section id="entities">
+  <div class="eyebrow">Table reference</div>
+  <h2>Tables by domain</h2>
+  <p>Every table has <code>created_at timestamptz NOT NULL DEFAULT now()</code>; it is omitted below unless it matters. IDs are UUIDv7 so they sort by insert time and index well.</p>
+  <div id="domains" style="display:grid;gap:44px"></div>
+</section>
+
+<section id="lifecycle">
+  <div class="eyebrow">Failure model</div>
+  <h2>Run item lifecycle</h2>
+  <p><code>run_items.status</code> is the explicit state machine the workers enforce. Each transition is a single conditional <code>UPDATE … WHERE status IN (…)</code>, so a duplicate SQS delivery loses the race and exits without side effects. Run status is derived from item counts.</p>
+  <div class="grid2">
+    <div class="frame">
+<pre class="mermaid" style="min-width:0">
+stateDiagram-v2
+  [*] --> queued
+  queued --> leased: worker claims
+  retry_wait --> leased: next_attempt_at reached
+  leased --> succeeded: all scores written
+  leased --> retry_wait: transient error, attempt < 5
+  leased --> retry_wait: lease expired (timeout)
+  leased --> dead_lettered: attempt = 5 or permanent error
+  queued --> cancelled: run cancelled
+  retry_wait --> cancelled: run cancelled
+  dead_lettered --> queued: manual replay
+  succeeded --> [*]
+  cancelled --> [*]
+</pre>
+    </div>
+    <div class="tbl frame" style="padding:0">
+      <table>
+        <thead><tr><th>eval_runs.status</th><th>Condition</th></tr></thead>
+        <tbody>
+          <tr><td class="col">queued</td><td>Created, no item leased yet</td></tr>
+          <tr><td class="col">running</td><td>At least one item leased or retrying</td></tr>
+          <tr><td class="col">succeeded</td><td>Every item succeeded</td></tr>
+          <tr><td class="col">partial</td><td>All items terminal, some dead-lettered, failed share ≤ <code>max_failure_ratio</code></td></tr>
+          <tr><td class="col">failed</td><td>All items terminal and failed share above the ratio, or the run errored before fan-out</td></tr>
+          <tr><td class="col">cancelled</td><td>User or CI cancelled; in-flight items finish, queued ones are skipped</td></tr>
+        </tbody>
+      </table>
+      <div style="padding:12px 14px;font-size:13px;color:var(--muted)">Backoff: <code class="mono">min(2^attempt × 2s, 120s)</code> plus full jitter. Permanent errors (schema mismatch, 4xx from the judge model) skip retries and go straight to <code>dead_lettered</code>.</div>
+    </div>
+  </div>
+</section>
+
+<section id="rules">
+  <div class="eyebrow">Constraints that carry the design</div>
+  <h2>Integrity rules</h2>
+  <div class="grid2">
+    <div class="note"><h3>Idempotent ingest</h3><p><code>UNIQUE (project_id, idempotency_key)</code> on <code>traces</code>. The SDK derives the key from its own trace id, so a retried batch inserts nothing new and the API reports the duplicates.</p></div>
+    <div class="note"><h3>Exactly one score per evaluator per item</h3><p><code>UNIQUE (run_item_id, evaluator_version_id)</code> on <code>scores</code>, written with <code>ON CONFLICT DO UPDATE</code>. Redelivered jobs overwrite rather than double-count.</p></div>
+    <div class="note"><h3>Frozen versions</h3><p>A trigger rejects <code>UPDATE</code> on <code>dataset_items</code> once its <code>dataset_versions.frozen_at</code> is set, and on any <code>*_versions</code> row referenced by a run. Edits create a new version.</p></div>
+    <div class="note"><h3>Comparable baselines</h3><p>A check constraint in the run-creation transaction requires <code>baseline_run_id</code> to share the same <code>dataset_version_id</code>. Comparing runs over different data is a 422.</p></div>
+    <div class="note"><h3>Tenant isolation</h3><p>Every query is scoped by <code>project_id</code>, taken from the API key and never from the request body. Postgres row-level security on <code>project_id</code> is the backstop.</p></div>
+    <div class="note"><h3>Secrets never stored in plain text</h3><p>API keys are stored as <code>key_prefix</code> plus an HMAC-SHA256 <code>key_hash</code>. Redaction runs in the SDK before upload; <code>traces.redaction</code> records which rules fired.</p></div>
+  </div>
+</section>
+
+<section id="scale">
+  <div class="eyebrow">Interview prompt: what changes at 10×</div>
+  <h2>At 10× scale</h2>
+  <ul class="plain">
+    <li><b>Partition <code>traces</code> and <code>spans</code></b> by month on <code>started_at</code> with <code>pg_partman</code>, and drop old partitions per retention policy instead of running large deletes.</li>
+    <li><b>Move span analytics to a columnar store</b> such as ClickHouse when dashboard queries start competing with OLTP writes. Postgres keeps the run and score tables.</li>
+    <li><b>Pre-aggregate run metrics</b> into a <code>run_metrics</code> table when a run finishes, so gate checks and comparisons stop scanning <code>scores</code>.</li>
+    <li><b>Split queues by evaluator cost.</b> Cheap rule-based scoring and slow LLM rubric scoring get separate SQS queues and worker pools, so rubric backlogs don't delay CI gates.</li>
+    <li><b>Batch judge-model calls</b> and cache rubric results keyed on <code>(evaluator_version.config_hash, output hash)</code> to cut cost per 1K traces.</li>
+  </ul>
+</section>
+</main>
+</div>
+
+<script>
+const T = {
+  pk:'<span class="tag pk">PK</span>', fk:'<span class="tag fk">FK</span>', uk:'<span class="tag uk">UK</span>', nn:'<span class="tag nn">NOT NULL</span>'
+};
+// [column, type, tags, note]
+const DOMAINS = [
+ { name:'Tenancy & access', blurb:'Who owns what, and how callers authenticate.', tables:[
+  { n:'organizations', d:'Top-level tenant. Billing and membership hang off this.', cols:[
+    ['id','uuid','pk',''],['name','text','nn',''],['slug','text','uk nn','URL-safe, lowercase']]},
+  { n:'users', d:'A person who signs in to the console.', cols:[
+    ['id','uuid','pk',''],['email','citext','uk nn','Case-insensitive'],['display_name','text','',''],['auth_subject','text','uk','OIDC subject from the identity provider']]},
+  { n:'memberships', d:'Join table between users and organizations, with a role.', cols:[
+    ['org_id','uuid','pk fk','→ organizations'],['user_id','uuid','pk fk','→ users'],['role','member_role','nn','owner · admin · member · viewer']]},
+  { n:'projects', d:'One LLM application or feature being evaluated. All data below is scoped to a project.', cols:[
+    ['id','uuid','pk',''],['org_id','uuid','fk nn','→ organizations'],['name','text','nn',''],['slug','text','nn','UNIQUE (org_id, slug)'],['retention_days','int','nn','Default 90; drives trace partition drops']]},
+  { n:'api_keys', d:'Machine credentials for the SDK and GitHub Action.', cols:[
+    ['id','uuid','pk',''],['project_id','uuid','fk nn','→ projects'],['key_prefix','text','uk nn','First 8 chars, shown in UI'],['key_hash','bytea','nn','HMAC-SHA256 of full key'],['scopes','text[]','nn','traces:write, runs:write, gates:read'],['last_used_at','timestamptz','',''],['revoked_at','timestamptz','','Non-null means rejected']],
+    idx:['(project_id) WHERE revoked_at IS NULL']}
+ ]},
+ { name:'Ingestion', blurb:'Production traces captured by the SDK.', tables:[
+  { n:'prompt_versions', d:'An immutable prompt template plus model settings. Traces and runs both point at one.', cols:[
+    ['id','uuid','pk',''],['project_id','uuid','fk nn','→ projects'],['name','text','nn','e.g. support-answer'],['version','int','nn','UNIQUE (project_id, name, version)'],['template','text','nn',''],['model','text','nn','provider/model id'],['params','jsonb','nn','temperature, max_tokens, tools'],['content_hash','text','nn','sha256 of template + model + params'],['git_sha','text','','Commit that introduced it']]},
+  { n:'traces', d:'One end-to-end LLM call or chain as seen in production.', cols:[
+    ['id','uuid','pk',''],['project_id','uuid','fk nn','→ projects'],['idempotency_key','text','nn','UNIQUE (project_id, idempotency_key)'],['prompt_version_id','uuid','fk','→ prompt_versions; null if untracked'],['model','text','nn',''],['input','jsonb','','Redacted; null when offloaded'],['output','jsonb','',''],['payload_s3_key','text','','Set when payload > 64 KB'],['status','trace_status','nn','ok · error'],['latency_ms','int','nn',''],['input_tokens','int','',''],['output_tokens','int','',''],['cost_usd','numeric(12,6)','',''],['redaction','jsonb','nn','Rules applied by the SDK'],['otel_trace_id','text','','Links to the customer\'s own tracing'],['started_at','timestamptz','nn','Partition key at scale'],['ingested_at','timestamptz','nn','']],
+    idx:['(project_id, started_at DESC)','(project_id, prompt_version_id, started_at DESC)']},
+  { n:'spans', d:'Steps inside a trace: LLM calls, retrievals, tool calls. Needed for retrieval metrics.', cols:[
+    ['id','uuid','pk',''],['trace_id','uuid','fk nn','→ traces ON DELETE CASCADE'],['parent_span_id','uuid','fk','→ spans; null for root'],['kind','span_kind','nn','llm · retrieval · tool · other'],['name','text','nn',''],['started_at','timestamptz','nn',''],['duration_ms','int','nn',''],['attributes','jsonb','nn','e.g. retrieved doc ids and scores']],
+    idx:['(trace_id)']}
+ ]},
+ { name:'Evaluation registry', blurb:'Versioned test data and versioned scoring logic.', tables:[
+  { n:'datasets', d:'A named collection of test cases, such as “refund questions”.', cols:[
+    ['id','uuid','pk',''],['project_id','uuid','fk nn','→ projects'],['name','text','nn','UNIQUE (project_id, name)'],['description','text','','']]},
+  { n:'dataset_versions', d:'An immutable snapshot of a dataset. Runs always reference a version, never the dataset.', cols:[
+    ['id','uuid','pk',''],['dataset_id','uuid','fk nn','→ datasets'],['version','int','nn','UNIQUE (dataset_id, version)'],['item_count','int','nn',''],['content_hash','text','nn','Detects identical re-snapshots'],['frozen_at','timestamptz','','Set on first use by a run']]},
+  { n:'dataset_items', d:'One test case. Can be promoted from a production trace.', cols:[
+    ['id','uuid','pk',''],['dataset_version_id','uuid','fk nn','→ dataset_versions'],['source_trace_id','uuid','fk','→ traces ON DELETE SET NULL'],['input','jsonb','nn',''],['expected_output','jsonb','','Needed by exact-match and schema evaluators'],['context','jsonb','','Ground-truth doc ids for retrieval relevance'],['tags','text[]','nn','For slicing results']],
+    idx:['(dataset_version_id)']},
+  { n:'evaluators', d:'A named metric, such as “answer is valid JSON” or “helpfulness rubric”.', cols:[
+    ['id','uuid','pk',''],['project_id','uuid','fk nn','→ projects'],['name','text','nn','UNIQUE (project_id, name)'],['kind','evaluator_kind','nn','exact_match · json_schema · latency · cost · retrieval_relevance · llm_rubric'],['higher_is_better','bool','nn','Direction for regression math']]},
+  { n:'evaluator_versions', d:'Immutable evaluator configuration. Changing a rubric creates a new version.', cols:[
+    ['id','uuid','pk',''],['evaluator_id','uuid','fk nn','→ evaluators'],['version','int','nn','UNIQUE (evaluator_id, version)'],['config','jsonb','nn','Schema, rubric text, thresholds, k for recall@k'],['judge_model','text','','Only for llm_rubric'],['config_hash','text','nn','Cache key for rubric results']]}
+ ]},
+ { name:'Execution', blurb:'Runs, the jobs they fan out into, and their scores.', tables:[
+  { n:'eval_runs', d:'One evaluation of a prompt version over a dataset version. Replays and CI checks are runs too.', cols:[
+    ['id','uuid','pk',''],['project_id','uuid','fk nn','→ projects'],['dataset_version_id','uuid','fk nn','→ dataset_versions'],['prompt_version_id','uuid','fk nn','→ prompt_versions (candidate)'],['baseline_run_id','uuid','fk','→ eval_runs; same dataset_version required'],['trigger','run_trigger','nn','manual · replay · ci'],['status','run_status','nn','See lifecycle'],['max_failure_ratio','numeric(4,3)','nn','Default 0.02'],['total_items','int','nn',''],['succeeded_items','int','nn','Counter updated by workers'],['failed_items','int','nn',''],['cost_usd','numeric(12,6)','nn',''],['git_sha','text','','For ci trigger'],['created_by','uuid','fk','→ users; null for API key'],['started_at','timestamptz','',''],['finished_at','timestamptz','','']],
+    idx:['(project_id, created_at DESC)','(status) WHERE status IN (\'queued\',\'running\')']},
+  { n:'run_evaluators', d:'Which evaluator versions a run applies.', cols:[
+    ['run_id','uuid','pk fk','→ eval_runs'],['evaluator_version_id','uuid','pk fk','→ evaluator_versions']]},
+  { n:'run_items', d:'One dataset item executed in one run. This is the queued job and the unit of retry.', cols:[
+    ['id','uuid','pk','Also the SQS message dedupe id'],['run_id','uuid','fk nn','→ eval_runs'],['dataset_item_id','uuid','fk nn','UNIQUE (run_id, dataset_item_id)'],['status','item_status','nn','queued · leased · retry_wait · succeeded · dead_lettered · cancelled'],['attempt','int','nn','0 until first lease'],['leased_by','text','','Worker task id'],['lease_expires_at','timestamptz','',''],['next_attempt_at','timestamptz','',''],['output','jsonb','','Candidate model output'],['latency_ms','int','',''],['cost_usd','numeric(12,6)','',''],['last_error','text','','']],
+    idx:['(run_id, status)','(lease_expires_at) WHERE status = \'leased\'']},
+  { n:'scores', d:'One evaluator\'s verdict on one run item.', cols:[
+    ['id','uuid','pk',''],['run_item_id','uuid','fk nn','→ run_items'],['evaluator_version_id','uuid','fk nn','UNIQUE (run_item_id, evaluator_version_id)'],['value','numeric','nn','Normalized 0–1, or raw ms / USD'],['passed','bool','','Null when evaluator has no pass line'],['rationale','text','','Judge explanation for llm_rubric'],['judge_cost_usd','numeric(12,6)','','']],
+    idx:['(evaluator_version_id, run_item_id) INCLUDE (value)']},
+  { n:'dead_letters', d:'Audit record for a job that exhausted retries. Mirrors what landed in the DLQ.', cols:[
+    ['id','uuid','pk',''],['run_item_id','uuid','fk nn','→ run_items'],['error_class','text','nn','timeout · judge_4xx · judge_5xx · schema · unknown'],['error_detail','text','',''],['attempts','int','nn',''],['payload','jsonb','nn','Message as received'],['replayed_at','timestamptz','','Set by manual replay']]}
+ ]},
+ { name:'Gating & reporting', blurb:'Turning scores into a pass/fail on a pull request.', tables:[
+  { n:'regression_gates', d:'A rule such as “fail if helpfulness drops more than 0.03 vs. main”.', cols:[
+    ['id','uuid','pk',''],['project_id','uuid','fk nn','→ projects'],['name','text','nn',''],['evaluator_version_id','uuid','fk nn','→ evaluator_versions'],['aggregate','gate_aggregate','nn','mean · p50 · p95 · pass_rate'],['comparator','gate_comparator','nn','min_absolute · max_drop_vs_baseline'],['threshold','numeric','nn',''],['enabled','bool','nn','']]},
+  { n:'gate_checks', d:'One evaluation of a gate against a run, usually from the GitHub Action.', cols:[
+    ['id','uuid','pk',''],['gate_id','uuid','fk nn','→ regression_gates'],['run_id','uuid','fk nn','→ eval_runs'],['baseline_run_id','uuid','fk','→ eval_runs'],['observed','numeric','nn',''],['baseline','numeric','',''],['delta','numeric','',''],['verdict','gate_verdict','nn','pass · fail · inconclusive'],['repo','text','','owner/name'],['pr_number','int','',''],['commit_sha','text','','']],
+    idx:['(gate_id, created_at DESC)']},
+  { n:'reports', d:'Exported comparison reports stored in S3.', cols:[
+    ['id','uuid','pk',''],['run_id','uuid','fk nn','→ eval_runs'],['format','text','nn','html · json · csv'],['s3_key','text','nn',''],['bytes','bigint','nn',''],['sha256','text','nn','']]}
+ ]}
+];
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+document.getElementById('domains').innerHTML = DOMAINS.map(dm => `
+  <div class="domain">
+    <div class="domain-head"><h3>${dm.name}</h3><span>${dm.blurb} · ${dm.tables.length} tables</span></div>
+    ${dm.tables.map(t => `
+      <div class="entity" id="t-${t.n}">
+        <div class="entity-head"><span class="entity-name">${t.n}</span></div>
+        <p>${esc(t.d)}</p>
+        <div class="tbl"><table>
+          <thead><tr><th>Column</th><th>Type</th><th>Keys</th><th>Notes</th></tr></thead>
+          <tbody>${t.cols.map(([c,ty,tg,nt]) => `<tr><td class="col">${c}</td><td class="type">${esc(ty)}</td><td style="white-space:nowrap">${tg.split(' ').filter(Boolean).map(k=>T[k]).join('')}</td><td>${esc(nt)}</td></tr>`).join('')}</tbody>
+        </table></div>
+        ${t.idx ? `<div class="idx">${t.idx.map(i=>`<div>${esc(i)}</div>`).join('')}</div>` : ''}
+      </div>`).join('')}
+  </div>`).join('');
+</script>

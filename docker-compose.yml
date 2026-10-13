@@ -1,0 +1,57 @@
+name: forgeeval
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://forgeeval:forgeeval@postgres:5432/forgeeval
+  REDIS_URL: redis://redis:6379/0
+  API_KEY_PEPPER: local-dev-pepper-change-me
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: forgeeval
+      POSTGRES_PASSWORD: forgeeval
+      POSTGRES_DB: forgeeval
+    ports: ["5433:5432"]  # 5432 is often taken by a native Postgres install
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeeval"]
+      interval: 2s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-env
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build: ./backend
+    command: ["uvicorn", "forgeeval.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *backend-env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "forgeeval.worker.main"]
+    environment: *backend-env
+    deploy: { replicas: 2 }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+volumes:
+  pgdata:
