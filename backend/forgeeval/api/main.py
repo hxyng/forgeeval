@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from forgeeval.api import compare, gates, registry, runs, traces
+from forgeeval.api import compare, gates, registry, run_items, runs, traces
 from forgeeval.auth import AuthContext, authenticate
 from forgeeval.db.session import engine, get_session
 from forgeeval.telemetry import instrument_app, instrument_engine, setup_telemetry
@@ -18,6 +18,7 @@ instrument_engine(engine)
 app.include_router(traces.router)
 app.include_router(registry.router)
 app.include_router(runs.router)
+app.include_router(run_items.router)
 app.include_router(compare.router)
 app.include_router(gates.router)
 
