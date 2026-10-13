@@ -9,12 +9,15 @@ overwrite the new owner's result.
 import enum
 import logging
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from sqlalchemy import exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -36,6 +39,7 @@ from forgeeval.db.models import (
 from forgeeval.evaluator_configs import parse_config
 from forgeeval.evaluators import REGISTRY, EvalCase
 from forgeeval.models_client import ModelClient, PermanentError, TransientError, render
+from forgeeval.telemetry import eval_cost, record, tracer, worker_item_duration, worker_items
 
 log = logging.getLogger("forgeeval.worker")
 
@@ -110,12 +114,21 @@ def _execute(db: Session, item: Claimed, models: ModelClient) -> dict[str, Any]:
     prompt = db.get_one(PromptVersion, run.prompt_version_id)
     case_row = db.get_one(DatasetItem, item.dataset_item_id)
 
-    gen = models.generate(
-        prompt.model,
-        render(prompt.template, case_row.input),
-        dict(prompt.params),
-        expected=case_row.expected_output,
-    )
+    with tracer.start_as_current_span(
+        "generate",
+        attributes={"gen_ai.request.model": prompt.model, "forgeeval.prompt": prompt.name},
+    ) as span:
+        gen = models.generate(
+            prompt.model,
+            render(prompt.template, case_row.input),
+            dict(prompt.params),
+            expected=case_row.expected_output,
+        )
+        span.set_attribute("forgeeval.generation.latency_ms", gen.latency_ms)
+        if gen.input_tokens is not None:
+            span.set_attribute("gen_ai.usage.input_tokens", gen.input_tokens)
+        if gen.output_tokens is not None:
+            span.set_attribute("gen_ai.usage.output_tokens", gen.output_tokens)
     case = EvalCase(
         item_input=case_row.input,
         expected_output=case_row.expected_output,
@@ -136,9 +149,15 @@ def _execute(db: Session, item: Claimed, models: ModelClient) -> dict[str, Any]:
         impl = REGISTRY.get(kind)
         if impl is None:
             raise PermanentError(f"evaluator kind {kind.value!r} is not implemented")
-        result = impl.score(
-            parse_config(kind.value, ev_version.config), case, ev_version.judge_model, models
-        )
+        with tracer.start_as_current_span(
+            f"score {kind.value}", attributes={"forgeeval.evaluator.kind": kind.value}
+        ) as span:
+            result = impl.score(
+                parse_config(kind.value, ev_version.config), case, ev_version.judge_model, models
+            )
+            span.set_attribute("forgeeval.score.value", float(result.value))
+            if result.passed is not None:
+                span.set_attribute("forgeeval.score.passed", result.passed)
         scores.append(
             {
                 "run_item_id": item.id,
@@ -279,12 +298,31 @@ def finalize_run(db: Session, run_id: uuid.UUID) -> RunStatus | None:
 
 
 def process(db: Session, item_id: uuid.UUID, worker_id: str, models: ModelClient) -> Outcome:
-    item = claim(db, item_id, worker_id)
+    started = time.perf_counter()
+    span = trace.get_current_span()
+    span.set_attribute("forgeeval.run_item.id", str(item_id))
+    outcome = _process(db, item_id, worker_id, models)
+    span.set_attribute("forgeeval.outcome", outcome.value)
+    record(worker_items.add, 1, {"outcome": outcome.value})
+    if outcome is not Outcome.skipped:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        record(worker_item_duration.record, elapsed_ms, {"outcome": outcome.value})
+    return outcome
+
+
+def _process(db: Session, item_id: uuid.UUID, worker_id: str, models: ModelClient) -> Outcome:
+    with tracer.start_as_current_span("claim"):
+        item = claim(db, item_id, worker_id)
     if item is None:
         return Outcome.skipped
+    span = trace.get_current_span()
+    span.set_attribute("forgeeval.run.id", str(item.run_id))
+    span.set_attribute("forgeeval.attempt", item.attempt)
     try:
         result = _execute(db, item, models)
     except Exception as exc:
+        span.record_exception(exc)
+        span.set_status(StatusCode.ERROR, f"{classify(exc)}: {exc}")
         db.rollback()
         if classify(exc) == "unknown":
             log.exception("unexpected error on run item %s (attempt %d)", item.id, item.attempt)
@@ -297,6 +335,8 @@ def process(db: Session, item_id: uuid.UUID, worker_id: str, models: ModelClient
             if _finish_success(db, item, worker_id, result)
             else Outcome.lost_lease
         )
+        if outcome is Outcome.succeeded:
+            record(eval_cost.add, float(result["cost_usd"]))
     if outcome in (Outcome.succeeded, Outcome.dead_lettered):
         finalize_run(db, item.run_id)
     return outcome

@@ -22,6 +22,33 @@ TEST_URL = make_url(ADMIN_URL).set(database="forgeeval_test").render_as_string(h
 
 # Point app settings at the test database before anything imports forgeeval.db.session.
 os.environ["DATABASE_URL"] = TEST_URL
+os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
+
+# Install in-memory telemetry before the app module installs its own (first caller wins).
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader  # noqa: E402
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: E402
+    InMemorySpanExporter,
+)
+
+from forgeeval import telemetry  # noqa: E402
+
+SPANS = InMemorySpanExporter()
+METRICS = InMemoryMetricReader()
+telemetry.setup_telemetry(
+    "forgeeval-test", span_processors=[SimpleSpanProcessor(SPANS)], metric_readers=[METRICS]
+)
+
+
+@pytest.fixture
+def spans() -> InMemorySpanExporter:
+    SPANS.clear()
+    return SPANS
+
+
+@pytest.fixture
+def metric_reader() -> InMemoryMetricReader:
+    return METRICS
 
 
 @pytest.fixture(scope="session")

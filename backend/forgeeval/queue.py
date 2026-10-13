@@ -8,12 +8,14 @@ for SQS (cloud) a configuration change instead of a redesign.
 
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 import redis
+from opentelemetry.trace import SpanKind
 
 from forgeeval.config import get_settings
+from forgeeval.telemetry import inject_headers, tracer
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class Message:
     run_item_id: uuid.UUID
     receipt: str
     deliveries: int
+    headers: dict[str, str] = field(default_factory=dict)  # W3C trace context
 
 
 class JobQueue(Protocol):
@@ -59,10 +62,21 @@ class RedisStreamQueue:
                 raise
 
     def enqueue(self, run_item_ids: Sequence[uuid.UUID]) -> None:
-        pipe = self._r.pipeline(transaction=False)
-        for item_id in run_item_ids:
-            pipe.xadd(self.stream, {"run_item_id": str(item_id)})
-        pipe.execute()
+        with tracer.start_as_current_span(
+            f"{self.stream} publish",
+            kind=SpanKind.PRODUCER,
+            attributes={
+                "messaging.system": "redis_streams",
+                "messaging.operation.type": "publish",
+                "messaging.destination.name": self.stream,
+                "messaging.batch.message_count": len(run_item_ids),
+            },
+        ):
+            headers: dict[Any, Any] = inject_headers()  # consumers continue this trace
+            pipe = self._r.pipeline(transaction=False)
+            for item_id in run_item_ids:
+                pipe.xadd(self.stream, {"run_item_id": str(item_id), **headers})
+            pipe.execute()
 
     def receive(self, consumer: str, max_messages: int, wait_seconds: float) -> list[Message]:
         out: list[Message] = []
@@ -113,11 +127,9 @@ class RedisStreamQueue:
 
     @staticmethod
     def _message(mid: bytes, fields: dict[bytes, bytes], deliveries: int) -> Message:
-        return Message(
-            run_item_id=uuid.UUID(fields[b"run_item_id"].decode()),
-            receipt=mid.decode(),
-            deliveries=deliveries,
-        )
+        decoded = {k.decode(): v.decode() for k, v in fields.items()}
+        run_item_id = uuid.UUID(decoded.pop("run_item_id"))
+        return Message(run_item_id, mid.decode(), deliveries, headers=decoded)
 
 
 _queue: JobQueue | None = None
