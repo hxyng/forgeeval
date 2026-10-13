@@ -1,0 +1,22 @@
+# Run the queue on SQS semantics locally (ElasticMQ) instead of Redis Streams:
+#   docker compose -f docker-compose.yml -f docker-compose.sqs.yml up -d --build --wait
+x-sqs-env: &sqs-env
+  QUEUE_BACKEND: sqs
+  SQS_QUEUE_URL: http://elasticmq:9324/000000000000/eval-jobs
+  AWS_ENDPOINT_URL: http://elasticmq:9324
+
+services:
+  elasticmq:
+    image: softwaremill/elasticmq-native:1.7.1
+    volumes: ["./infra/local/elasticmq.conf:/opt/elasticmq.conf:ro"]
+    ports: ["9324:9324"]
+
+  api:
+    environment: *sqs-env
+    depends_on:
+      elasticmq: { condition: service_started }
+
+  worker:
+    environment: *sqs-env
+    depends_on:
+      elasticmq: { condition: service_started }

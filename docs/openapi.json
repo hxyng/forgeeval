@@ -4402,7 +4402,7 @@
     },
     "/v1/traces:batch": {
       "post": {
-        "description": "Store up to 500 traces. Re-sending a trace id already stored counts as a duplicate.",
+        "description": "Store up to 500 traces. Re-sending a trace id already stored counts as a duplicate.\n\nWith an object store configured, payloads over ``payload_offload_bytes`` go to S3 and the\nper-trace limit rises from 256 KiB to 2 MiB.",
         "operationId": "ingest_batch_v1_traces_batch_post",
         "parameters": [
           {

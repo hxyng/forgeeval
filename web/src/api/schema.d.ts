@@ -428,6 +428,9 @@ export interface paths {
         /**
          * Ingest Batch
          * @description Store up to 500 traces. Re-sending a trace id already stored counts as a duplicate.
+         *
+         *     With an object store configured, payloads over ``payload_offload_bytes`` go to S3 and the
+         *     per-trace limit rises from 256 KiB to 2 MiB.
          */
         post: operations["ingest_batch_v1_traces_batch_post"];
         delete?: never;

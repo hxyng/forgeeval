@@ -31,6 +31,20 @@ docker compose exec api python -m forgeeval.admin bootstrap --org acme --project
 curl -H "Authorization: Bearer fe_..." localhost:8000/v1/whoami
 ```
 
+## Queue and object storage
+
+Locally the job queue is Redis Streams; in AWS it is SQS with a dead-letter queue. To run the
+same code on SQS semantics locally (ElasticMQ, same redrive policy as Terraform):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sqs.yml up -d --build --wait
+```
+
+Trace payloads over 64 KiB go to S3 (S3Mock locally on port 9091), which raises the per-trace
+limit from 256 KiB to 2 MiB. Why the queue is only a wake-up signal and the database is the
+source of truth: [ADR 0001](docs/adr/0001-job-queue.md); schema choices:
+[ADR 0002](docs/adr/0002-database.md).
+
 ## Dashboards
 
 The collector turns the API's and workers' OTLP metrics into Prometheus metrics (**http://localhost:9090**),
@@ -100,4 +114,5 @@ run `pnpm gen:api` and commit `web/src/api/schema.d.ts`; CI fails when it is sta
 | `backend/migrations` | Alembic migrations |
 | `sdk/` | Python client SDK: trace capture, local PII redaction, batching, retries |
 | `web/` | React + TypeScript web console: runs, failing cases, compare, gates, traces |
-| `infra/` | Terraform for AWS: ECS, RDS, SQS, S3 (later layer) |
+| `infra/` | Terraform for AWS (next layer); `infra/local` holds emulator config |
+| `docs/adr` | Architecture decision records |

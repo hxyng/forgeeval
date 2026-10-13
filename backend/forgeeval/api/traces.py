@@ -7,6 +7,7 @@ Validation is per item: one bad trace is reported in ``rejected`` without failin
 
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -14,21 +15,25 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import AwareDatetime, BaseModel, Field, ValidationError
-from sqlalchemy import and_, or_, select, tuple_
+from sqlalchemy import and_, null, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from forgeeval.auth import AuthContext, Scope, require
+from forgeeval.config import get_settings
 from forgeeval.db.base import uuid7
 from forgeeval.db.models import PromptVersion, Span, SpanKind, Trace, TraceStatus
 from forgeeval.db.session import get_session
+from forgeeval.storage import PayloadStore, get_store, payload_key
 from forgeeval.telemetry import ingested_traces, record
 
 router = APIRouter(prefix="/v1/traces", tags=["traces"])
+log = logging.getLogger("forgeeval.api.traces")
 
 MAX_BATCH = 500
 MAX_SPANS = 500
-MAX_PAYLOAD_BYTES = 256 * 1024
+MAX_PAYLOAD_BYTES = 256 * 1024  # inline in Postgres (no object store configured)
+MAX_OFFLOADED_PAYLOAD_BYTES = 2 * 1024 * 1024  # with S3 offload
 
 DbSession = Annotated[Session, Depends(get_session)]
 
@@ -134,11 +139,15 @@ class TracePage(BaseModel):
 # ---------- helpers ----------
 
 
-def _validate_item(raw: dict[str, Any]) -> TraceIn:
+def payload_size(item: TraceIn) -> int:
+    return len(json.dumps([item.input, item.output], default=str).encode())
+
+
+def _validate_item(raw: dict[str, Any], limit: int) -> TraceIn:
     item = TraceIn.model_validate(raw)
-    size = len(json.dumps([item.input, item.output], default=str).encode())
-    if size > MAX_PAYLOAD_BYTES:
-        raise ValueError(f"input+output is {size} bytes; limit is {MAX_PAYLOAD_BYTES}")
+    size = payload_size(item)
+    if size > limit:
+        raise ValueError(f"input+output is {size} bytes; limit is {limit}")
     seen: set[str] = set()
     for span in item.spans:
         if span.id in seen:
@@ -186,6 +195,19 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid cursor.") from exc
 
 
+def load_payload(trace: Trace, store: PayloadStore | None) -> dict[str, Any]:
+    """Input and output for a trace, fetched from the object store when offloaded."""
+    if trace.payload_s3_key is None:
+        return {"input": trace.input, "output": trace.output}
+    if store is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "This trace's payload is in object storage, which is not configured.",
+        )
+    payload = store.get(trace.payload_s3_key)
+    return {"input": payload.get("input"), "output": payload.get("output")}
+
+
 # ---------- routes ----------
 
 
@@ -194,15 +216,21 @@ def ingest_batch(
     body: TraceBatchIn,
     db: DbSession,
     ctx: Annotated[AuthContext, require(Scope.traces_write)],
+    store: Annotated[PayloadStore | None, Depends(get_store)],
 ) -> TraceBatchOut:
-    """Store up to 500 traces. Re-sending a trace id already stored counts as a duplicate."""
+    """Store up to 500 traces. Re-sending a trace id already stored counts as a duplicate.
+
+    With an object store configured, payloads over ``payload_offload_bytes`` go to S3 and the
+    per-trace limit rises from 256 KiB to 2 MiB."""
+    limit = MAX_OFFLOADED_PAYLOAD_BYTES if store else MAX_PAYLOAD_BYTES
+    offload_over = get_settings().payload_offload_bytes
     rejected: list[Rejected] = []
     valid: list[TraceIn] = []
     seen_ids: set[str] = set()
     in_batch_dupes = 0
     for index, raw in enumerate(body.traces):
         try:
-            item = _validate_item(raw)
+            item = _validate_item(raw, limit)
         except (ValidationError, ValueError) as exc:
             client_id = raw.get("id") if isinstance(raw.get("id"), str) else None
             rejected.append(Rejected(index=index, id=client_id, error=_error_text(exc)))
@@ -212,6 +240,29 @@ def ingest_batch(
             continue
         seen_ids.add(item.id)
         valid.append(item)
+
+    # Offload large payloads before touching Postgres; a failed upload rejects that trace
+    # rather than storing it without its payload.
+    offloaded: dict[str, str] = {}
+    if store is not None:
+        kept: list[TraceIn] = []
+        for t in valid:
+            if payload_size(t) <= offload_over:
+                kept.append(t)
+                continue
+            key = payload_key(ctx.project_id, t.id)
+            try:
+                store.put(key, {"input": t.input, "output": t.output})
+            except Exception:
+                log.exception("payload upload failed for trace %s", t.id)
+                index = next(i for i, r in enumerate(body.traces) if r.get("id") == t.id)
+                rejected.append(
+                    Rejected(index=index, id=t.id, error="payload storage unavailable; retry")
+                )
+                continue
+            offloaded[t.id] = key
+            kept.append(t)
+        valid = kept
 
     refs = {(t.prompt.name, t.prompt.version) for t in valid if t.prompt}
     prompt_ids: dict[tuple[str, int], uuid.UUID] = {}
@@ -236,8 +287,9 @@ def ingest_batch(
                 if t.prompt
                 else None,
                 "model": t.model,
-                "input": t.input,
-                "output": t.output,
+                "input": null() if t.id in offloaded else t.input,  # SQL NULL, not JSON null
+                "output": null() if t.id in offloaded else t.output,
+                "payload_s3_key": offloaded.get(t.id),
                 "status": t.status,
                 "latency_ms": t.latency_ms,
                 "input_tokens": t.input_tokens,
@@ -328,6 +380,7 @@ def get_trace(
     trace_id: uuid.UUID,
     db: DbSession,
     ctx: Annotated[AuthContext, require(Scope.project_read)],
+    store: Annotated[PayloadStore | None, Depends(get_store)],
 ) -> TraceDetailOut:
     trace = db.scalar(select(Trace).where(Trace.id == trace_id, Trace.project_id == ctx.project_id))
     if trace is None:
@@ -335,8 +388,7 @@ def get_trace(
     spans = db.scalars(select(Span).where(Span.trace_id == trace.id).order_by(Span.started_at))
     return TraceDetailOut(
         **_to_out(trace).model_dump(),
-        input=trace.input,
-        output=trace.output,
+        **load_payload(trace, store),
         redaction=trace.redaction,
         otel_trace_id=trace.otel_trace_id,
         spans=[SpanOut.model_validate(s, from_attributes=True) for s in spans],
