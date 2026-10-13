@@ -45,6 +45,10 @@ limit from 256 KiB to 2 MiB. Why the queue is only a wake-up signal and the data
 source of truth: [ADR 0001](docs/adr/0001-job-queue.md); schema choices:
 [ADR 0002](docs/adr/0002-database.md).
 
+## Model-call cache
+
+The worker memoises successful model calls in Postgres (`model_call_cache`), for both generations and LLM-judge verdicts, keyed by a hash of kind, model, params and prompt (plus `expected` for `fake/oracle`). Re-running an unchanged prompt, dataset and evaluators makes no model calls and adds $0 to the run's `cost_usd`; cached answers keep their original latency, tokens and cost, so latency and cost evaluators score them the same. `GET /v1/runs/{id}` reports `cache_hits`, and `POST /v1/runs` accepts `use_cache: false` to force fresh calls. Calls with `temperature > 0` are never cached unless `CACHE_SAMPLED_OUTPUTS=true`, entries older than `CACHE_MAX_AGE_DAYS` (30) are ignored, and `CACHE_ENABLED=false` turns the cache off. Judge prompts put the shared rubric first and the per-item fields last so provider-side prefix caching can apply.
+
 ## Dashboards
 
 The collector turns the API's and workers' OTLP metrics into Prometheus metrics (**http://localhost:9090**),

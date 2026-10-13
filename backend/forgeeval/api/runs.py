@@ -61,6 +61,11 @@ class RunIn(BaseModel):
     trigger: RunTrigger = RunTrigger.manual
     git_sha: str | None = Field(None, max_length=64)
     max_failure_ratio: Decimal = Field(Decimal("0.02"), ge=0, le=1, decimal_places=3)
+    use_cache: bool = Field(
+        True,
+        description="Reuse cached generations and judge verdicts for unchanged inputs. "
+        "Set false to force fresh model calls (reads and writes).",
+    )
 
 
 class RunEvaluatorOut(BaseModel):
@@ -90,7 +95,9 @@ class RunOut(BaseModel):
     baseline_run_id: uuid.UUID | None
     total_items: int
     progress: Progress
-    cost_usd: Decimal
+    cost_usd: Decimal = Field(description="Spend on non-cached model calls only")
+    use_cache: bool
+    cache_hits: int = Field(description="Items whose generation was served from the cache")
     git_sha: str | None
     created_at: datetime
     started_at: datetime | None
@@ -171,6 +178,9 @@ def _run_out(db: Session, run: EvalRun) -> RunOut:
         )
     }
     progress = Progress(**{s.value: counts.get(s, 0) for s in ItemStatus})
+    cache_hits = db.scalar(
+        select(func.count()).where(RunItem.run_id == run.id, RunItem.cache_hit.is_(True))
+    )
     return RunOut(
         id=run.id,
         status=run.status,
@@ -184,6 +194,8 @@ def _run_out(db: Session, run: EvalRun) -> RunOut:
         total_items=run.total_items,
         progress=progress,
         cost_usd=run.cost_usd,
+        use_cache=run.use_cache,
+        cache_hits=cache_hits or 0,
         git_sha=run.git_sha,
         created_at=run.created_at,
         started_at=run.started_at,
@@ -244,6 +256,7 @@ def create_run(
         max_failure_ratio=body.max_failure_ratio,
         total_items=dv.item_count,
         git_sha=body.git_sha,
+        use_cache=body.use_cache,
     )
     db.add(run)
     db.flush()

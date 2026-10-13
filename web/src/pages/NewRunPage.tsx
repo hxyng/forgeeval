@@ -74,6 +74,7 @@ export function NewRunPage() {
       baseline_run_id: baseline || null,
       max_failure_ratio: r,
       trigger: "manual",
+      use_cache: true,
     };
     create.mutate(body, { onSuccess: (run) => navigate(`/runs/${run.id}`) });
   }

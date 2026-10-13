@@ -22,7 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import CITEXT
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forgeeval.db.base import Base, CreatedAt, pk
@@ -313,6 +313,7 @@ class EvalRun(CreatedAt, Base):
     succeeded_items: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     failed_items: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     cost_usd: Mapped[Decimal] = mapped_column(Money, server_default="0")
+    use_cache: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     git_sha: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = fk("users.id", nullable=True, ondelete="SET NULL")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -359,6 +360,7 @@ class RunItem(CreatedAt, Base):
     output: Mapped[dict[str, Any] | None]
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     cost_usd: Mapped[Decimal | None] = mapped_column(Money)
+    cache_hit: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     last_error: Mapped[str | None] = mapped_column(Text)
 
 
@@ -434,3 +436,22 @@ class Report(CreatedAt, Base):
     s3_key: Mapped[str] = mapped_column(Text)
     bytes: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(Text)
+
+
+class ModelCacheEntry(Base):
+    """A memoised model call: a generation or an LLM-judge verdict, keyed by its full input."""
+
+    __tablename__ = "model_call_cache"
+    key: Mapped[str] = mapped_column(Text, primary_key=True)  # sha256 hex
+    kind: Mapped[str] = mapped_column(Text)  # 'generation' | 'judge'
+    model: Mapped[str] = mapped_column(Text)
+    output: Mapped[Any] = mapped_column(JSONB)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Money)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    hits: Mapped[int] = mapped_column(Integer, server_default=text("0"))

@@ -50,6 +50,11 @@ worker_item_duration = meter.create_histogram(
 eval_cost = meter.create_counter(
     "forgeeval.eval.cost", unit="USD", description="Model and judge cost of evaluated items"
 )
+model_cache_lookups = meter.create_counter(
+    "forgeeval.model_cache.lookups",
+    unit="{lookup}",
+    description="Model-call cache lookups, by kind and outcome (hit, miss, bypass)",
+)
 runs_created = meter.create_counter(
     "forgeeval.runs.created", unit="{run}", description="Evaluation runs created, by trigger"
 )
