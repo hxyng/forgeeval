@@ -49,6 +49,9 @@ export function RunsPage() {
         <h1>Runs</h1>
         <div className="page-actions">
           {live && <span className="live muted">Refreshing every 2 s while runs are active</span>}
+          <Link className="btn btn-primary" to="/runs/new">
+            Start run
+          </Link>
         </div>
       </div>
       {q.isPending ? (

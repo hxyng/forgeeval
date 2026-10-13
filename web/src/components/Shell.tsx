@@ -12,9 +12,9 @@ interface NavItem {
 
 export const NAV: NavItem[] = [
   { to: "/", label: "Runs", enabled: true, end: true },
-  { to: "/compare", label: "Compare", enabled: false },
-  { to: "/gates", label: "Gates", enabled: false },
-  { to: "/traces", label: "Traces", enabled: false },
+  { to: "/compare", label: "Compare", enabled: true },
+  { to: "/gates", label: "Gates", enabled: true },
+  { to: "/traces", label: "Traces", enabled: true },
 ];
 
 export function Shell() {

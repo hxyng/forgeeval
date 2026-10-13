@@ -116,6 +116,9 @@ export function RunDetailPage() {
           <Link className="btn" to={`/runs/${r.id}/items`}>
             Items
           </Link>
+          <Link className="btn" to={`/runs/${r.id}/compare`}>
+            Compare
+          </Link>
           {active && (
             <button
               type="button"
