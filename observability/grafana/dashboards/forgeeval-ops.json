@@ -1,0 +1,519 @@
+{
+  "uid": "forgeeval-ops",
+  "title": "ForgeEval operations",
+  "tags": [
+    "forgeeval"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Jaeger",
+      "type": "link",
+      "url": "http://localhost:16686",
+      "targetBlank": true,
+      "icon": "external link"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**ForgeEval operations** - metrics via OTLP -> OpenTelemetry Collector -> Prometheus. Traces: [open Jaeger](http://localhost:16686) | Prometheus: [localhost:9090](http://localhost:9090)"
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "API latency p50 by route",
+      "description": "Median server request duration per route template",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 2,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, http_target) (rate(http_server_duration_milliseconds_bucket{service_name=\"forgeeval-api\"}[$__rate_interval])))",
+          "legendFormat": "{{http_target}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "API latency p95 by route",
+      "description": "95th percentile server request duration per route template",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 2,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, http_target) (rate(http_server_duration_milliseconds_bucket{service_name=\"forgeeval-api\"}[$__rate_interval])))",
+          "legendFormat": "{{http_target}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP error rate (5xx and 4xx)",
+      "description": "Requests per second answered with 5xx / 4xx status",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "sum(rate(http_server_duration_milliseconds_count{service_name=\"forgeeval-api\",http_status_code=~\"5..\"}[$__rate_interval])) or vector(0)",
+          "legendFormat": "5xx"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "sum(rate(http_server_duration_milliseconds_count{service_name=\"forgeeval-api\",http_status_code=~\"4..\"}[$__rate_interval])) or vector(0)",
+          "legendFormat": "4xx"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Queue depth",
+      "description": "Each worker reports the same shared Redis queue, so max() avoids double counting",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "max(forgeeval_queue_depth)",
+          "legendFormat": "pending items"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Items processed per second by outcome",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "sum by (outcome) (rate(forgeeval_worker_items_total[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Item processing time p95",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(forgeeval_worker_item_duration_milliseconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Evaluation cost per hour",
+      "description": "Model and judge cost accrued over the trailing hour",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "sum(increase(forgeeval_eval_cost_USD_total[1h]))",
+          "legendFormat": "USD / hour"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Runs created by trigger (per minute)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "sum by (trigger) (rate(forgeeval_runs_created_total[$__rate_interval])) * 60",
+          "legendFormat": "{{trigger}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Ingested traces by outcome (per second)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "forgeeval-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "forgeeval-prometheus"
+          },
+          "expr": "sum by (outcome) (rate(forgeeval_ingest_traces_total[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    }
+  ]
+}

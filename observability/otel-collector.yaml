@@ -1,5 +1,5 @@
-# Receives OTLP from the API and workers. Traces go to Jaeger; metrics are batched and logged
-# here until the Prometheus exporter is added with the dashboards.
+# Receives OTLP from the API and workers. Traces go to Jaeger; metrics are exposed on :8889 for
+# Prometheus to scrape (resource attributes such as service.name become labels).
 receivers:
   otlp:
     protocols:
@@ -19,8 +19,10 @@ exporters:
     endpoint: jaeger:4317
     tls:
       insecure: true
-  debug:
-    verbosity: basic
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
 
 service:
   pipelines:
@@ -31,4 +33,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [debug]
+      exporters: [prometheus]
