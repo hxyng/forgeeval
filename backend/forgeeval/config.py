@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     model_strip_provider: bool = False  # "openai/gpt-5-mini" -> "gpt-5-mini" for direct APIs
     model_timeout_seconds: float = 60.0
 
+    # Model-call cache (generations and judge verdicts); see forgeeval/model_cache.py
+    cache_enabled: bool = True
+    cache_max_age_days: int = 30
+    cache_sampled_outputs: bool = False  # cache temperature > 0 calls too (a draw, not an answer)
+
     # Worker
     max_attempts: int = 5
     lease_seconds: float = 120.0

@@ -16,7 +16,9 @@ from types import FrameType
 from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.trace import SpanKind
 
+from forgeeval.config import get_settings
 from forgeeval.db.session import SessionLocal, engine
+from forgeeval.model_cache import CachingModelClient, PgCacheStore
 from forgeeval.models_client import ModelClient, default_client
 from forgeeval.queue import JobQueue, get_queue
 from forgeeval.telemetry import (
@@ -110,7 +112,15 @@ def main() -> None:
     instrument_engine(engine)
     queue = get_queue()
     observe_queue_depth(queue)
-    worker = Worker(queue=queue, models=default_client())
+    cfg = get_settings()
+    models = CachingModelClient(
+        default_client(),
+        PgCacheStore(SessionLocal),
+        enabled=cfg.cache_enabled,
+        max_age_days=cfg.cache_max_age_days,
+        cache_sampled_outputs=cfg.cache_sampled_outputs,
+    )
+    worker = Worker(queue=queue, models=models)
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
     worker.run_forever()

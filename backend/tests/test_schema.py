@@ -24,10 +24,10 @@ def alembic_cfg() -> Config:
     return cfg
 
 
-def test_all_21_tables_exist(migrated_engine: Engine) -> None:
+def test_all_22_tables_exist(migrated_engine: Engine) -> None:
     tables = set(inspect(migrated_engine).get_table_names()) - {"alembic_version"}
     assert tables == set(Base.metadata.tables)
-    assert len(tables) == 21
+    assert len(tables) == 22
 
 
 def test_models_match_migration(migrated_engine: Engine) -> None:
@@ -42,7 +42,7 @@ def test_downgrade_then_upgrade_round_trips(migrated_engine: Engine) -> None:
     command.downgrade(alembic_cfg(), "base")
     assert set(inspect(migrated_engine).get_table_names()) <= {"alembic_version"}
     command.upgrade(alembic_cfg(), "head")
-    assert len(inspect(migrated_engine).get_table_names()) == 22
+    assert len(inspect(migrated_engine).get_table_names()) == 23
 
 
 @pytest.fixture

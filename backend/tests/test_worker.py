@@ -256,7 +256,14 @@ def test_stale_worker_cannot_overwrite_a_reassigned_item(client: TestClient, db:
     assert claimed is not None
     db.execute(update(RunItem).where(RunItem.id == item.id).values(leased_by="worker-b"))
     db.commit()
-    result = {"output": {"label": "x"}, "latency_ms": 1, "cost_usd": Decimal(0), "scores": []}
+    result = {
+        "output": {"label": "x"},
+        "latency_ms": 1,
+        "cost_usd": Decimal(0),
+        "spend_usd": Decimal(0),
+        "cache_hit": False,
+        "scores": [],
+    }
     assert processor._finish_success(db, claimed, "worker-a", result) is False
     assert items(db, run_id)[0].status is ItemStatus.leased
 

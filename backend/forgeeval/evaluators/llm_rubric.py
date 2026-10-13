@@ -16,18 +16,18 @@ def _dump(value: Any) -> str:
 
 
 def build_prompt(config: LlmRubricConfig, case: EvalCase) -> str:
+    """Everything shared by all items comes first and the per-item parts last, so providers'
+    prefix caching can reuse the common prefix across a run's judge calls."""
     parts = [
         "You are a strict evaluator. Grade the candidate output using the rubric.",
         f"Rubric:\n{config.rubric}",
         f"Scale: integer from {config.scale_min} (worst) to {config.scale_max} (best).",
+        'Respond with JSON only, no other text: {"score": <int>, "reason": "<one sentence>"}',
         f"Input:\n{_dump(case.item_input)}",
     ]
     if case.expected_output is not None:
         parts.append(f"Expected output:\n{_dump(case.expected_output)}")
     parts.append(f"Candidate output:\n{_dump(case.output)}")
-    parts.append(
-        'Respond with JSON only, no other text: {"score": <int>, "reason": "<one sentence>"}'
-    )
     return "\n\n".join(parts)
 
 

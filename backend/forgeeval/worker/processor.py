@@ -38,6 +38,7 @@ from forgeeval.db.models import (
 )
 from forgeeval.evaluator_configs import parse_config
 from forgeeval.evaluators import REGISTRY, EvalCase
+from forgeeval.model_cache import CachingModelClient
 from forgeeval.models_client import ModelClient, PermanentError, TransientError, render
 from forgeeval.telemetry import eval_cost, record, tracer, worker_item_duration, worker_items
 
@@ -113,12 +114,19 @@ def _execute(db: Session, item: Claimed, models: ModelClient) -> dict[str, Any]:
     run = db.get_one(EvalRun, item.run_id)
     prompt = db.get_one(PromptVersion, run.prompt_version_id)
     case_row = db.get_one(DatasetItem, item.dataset_item_id)
+    # A caching client is scoped per item so hits are attributed to it; any other client is
+    # used as is and counts as all misses.
+    scope = (
+        models.scope(use_cache=run.use_cache) if isinstance(models, CachingModelClient) else None
+    )
+    generator = scope.generator if scope else models
+    judge = scope.judge if scope else models
 
     with tracer.start_as_current_span(
         "generate",
         attributes={"gen_ai.request.model": prompt.model, "forgeeval.prompt": prompt.name},
     ) as span:
-        gen = models.generate(
+        gen = generator.generate(
             prompt.model,
             render(prompt.template, case_row.input),
             dict(prompt.params),
@@ -153,7 +161,7 @@ def _execute(db: Session, item: Claimed, models: ModelClient) -> dict[str, Any]:
             f"score {kind.value}", attributes={"forgeeval.evaluator.kind": kind.value}
         ) as span:
             result = impl.score(
-                parse_config(kind.value, ev_version.config), case, ev_version.judge_model, models
+                parse_config(kind.value, ev_version.config), case, ev_version.judge_model, judge
             )
             span.set_attribute("forgeeval.score.value", float(result.value))
             if result.passed is not None:
@@ -169,10 +177,16 @@ def _execute(db: Session, item: Claimed, models: ModelClient) -> dict[str, Any]:
             }
         )
     judge_cost = sum((s["judge_cost_usd"] or Decimal(0) for s in scores), Decimal(0))
+    total_cost = (gen.cost_usd or Decimal(0)) + judge_cost
     return {
         "output": gen.output,
         "latency_ms": gen.latency_ms,
-        "cost_usd": (gen.cost_usd or Decimal(0)) + judge_cost,
+        # What the answer cost when it was produced; cached calls report their original cost so
+        # cost evaluators score a rerun identically.
+        "cost_usd": total_cost,
+        # What this run actually paid: cached generations and judge verdicts are free.
+        "spend_usd": total_cost - (scope.saved_usd if scope else Decimal(0)),
+        "cache_hit": bool(scope and scope.generation_hit),
         "scores": scores,
     }
 
@@ -190,6 +204,7 @@ def _finish_success(db: Session, item: Claimed, worker_id: str, result: dict[str
             output=result["output"],
             latency_ms=result["latency_ms"],
             cost_usd=result["cost_usd"],
+            cache_hit=result["cache_hit"],
             last_error=None,
             lease_expires_at=None,
         )
@@ -216,7 +231,7 @@ def _finish_success(db: Session, item: Claimed, worker_id: str, result: dict[str
         .where(EvalRun.id == item.run_id)
         .values(
             succeeded_items=EvalRun.succeeded_items + 1,
-            cost_usd=EvalRun.cost_usd + result["cost_usd"],
+            cost_usd=EvalRun.cost_usd + result["spend_usd"],
         )
     )
     db.commit()
@@ -336,7 +351,7 @@ def _process(db: Session, item_id: uuid.UUID, worker_id: str, models: ModelClien
             else Outcome.lost_lease
         )
         if outcome is Outcome.succeeded:
-            record(eval_cost.add, float(result["cost_usd"]))
+            record(eval_cost.add, float(result["spend_usd"]))
     if outcome in (Outcome.succeeded, Outcome.dead_lettered):
         finalize_run(db, item.run_id)
     return outcome

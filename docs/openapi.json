@@ -1520,6 +1520,12 @@
           "trigger": {
             "$ref": "#/components/schemas/RunTrigger",
             "default": "manual"
+          },
+          "use_cache": {
+            "default": true,
+            "description": "Reuse cached generations and judge verdicts for unchanged inputs. Set false to force fresh model calls (reads and writes).",
+            "title": "Use Cache",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1710,7 +1716,13 @@
             ],
             "title": "Baseline Run Id"
           },
+          "cache_hits": {
+            "description": "Items whose generation was served from the cache",
+            "title": "Cache Hits",
+            "type": "integer"
+          },
           "cost_usd": {
+            "description": "Spend on non-cached model calls only",
             "title": "Cost Usd",
             "type": "string"
           },
@@ -1794,6 +1806,10 @@
           },
           "trigger": {
             "$ref": "#/components/schemas/RunTrigger"
+          },
+          "use_cache": {
+            "title": "Use Cache",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1809,6 +1825,8 @@
           "total_items",
           "progress",
           "cost_usd",
+          "use_cache",
+          "cache_hits",
           "git_sha",
           "created_at",
           "started_at",

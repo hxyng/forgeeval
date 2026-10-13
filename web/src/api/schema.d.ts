@@ -1032,6 +1032,12 @@ export interface components {
             prompt: components["schemas"]["VersionRef"];
             /** @default manual */
             trigger: components["schemas"]["RunTrigger"];
+            /**
+             * Use Cache
+             * @description Reuse cached generations and judge verdicts for unchanged inputs. Set false to force fresh model calls (reads and writes).
+             * @default true
+             */
+            use_cache: boolean;
         };
         /** RunItemOut */
         RunItemOut: {
@@ -1093,7 +1099,15 @@ export interface components {
         RunOut: {
             /** Baseline Run Id */
             baseline_run_id: string | null;
-            /** Cost Usd */
+            /**
+             * Cache Hits
+             * @description Items whose generation was served from the cache
+             */
+            cache_hits: number;
+            /**
+             * Cost Usd
+             * @description Spend on non-cached model calls only
+             */
             cost_usd: string;
             /**
              * Created At
@@ -1126,6 +1140,8 @@ export interface components {
             /** Total Items */
             total_items: number;
             trigger: components["schemas"]["RunTrigger"];
+            /** Use Cache */
+            use_cache: boolean;
         };
         /** RunPage */
         RunPage: {

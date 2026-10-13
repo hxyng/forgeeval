@@ -92,6 +92,8 @@ export function makeRun(over: Partial<Schemas["RunOut"]> = {}): Schemas["RunOut"
       cancelled: 0,
     },
     cost_usd: "0.000889",
+    use_cache: true,
+    cache_hits: 0,
     git_sha: "9585a58d1f2c",
     created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
     started_at: new Date(Date.now() - 5 * 60_000).toISOString(),
