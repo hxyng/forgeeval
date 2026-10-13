@@ -1,0 +1,178 @@
+name: deploy
+
+# Builds both images, migrates the database, rolls the three ECS services and smoke-tests the
+# load balancer. It does nothing until the repository variable AWS_DEPLOY_ROLE_ARN is set
+# (see docs/runbooks/deploy-and-rollback.md). Credentials come from OIDC; there are no AWS secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push waits instead of cancelling a deploy that is mid-flight.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  NAME_PREFIX: ${{ vars.NAME_PREFIX || 'forgeeval-prod' }}
+  IMAGE_TAG: ${{ github.sha }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    # Skipped (not failed) when no AWS account is connected. The variable must exist at repository
+    # level: environment variables are not visible to a job-level condition.
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          for image in backend web; do
+            repository="${NAME_PREFIX}-${image}"
+            # Tags are immutable: a re-run of the same commit reuses the image already pushed.
+            existing=$(aws ecr batch-get-image --repository-name "$repository" \
+              --image-ids "imageTag=${IMAGE_TAG}" --query 'images[0].imageId.imageTag' --output text)
+            if [ "$existing" = "$IMAGE_TAG" ]; then
+              echo "$repository:$IMAGE_TAG already exists, skipping build"
+              continue
+            fi
+            docker build --tag "${REGISTRY}/${repository}:${IMAGE_TAG}" "$image"
+            docker push "${REGISTRY}/${repository}:${IMAGE_TAG}"
+          done
+
+      - name: Register task definitions with the new images
+        id: taskdefs
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          backend="${REGISTRY}/${NAME_PREFIX}-backend:${IMAGE_TAG}"
+          web="${REGISTRY}/${NAME_PREFIX}-web:${IMAGE_TAG}"
+
+          # Copy the latest revision of a family, swap the image of one container (the ADOT sidecar
+          # keeps its own image) and register it as a new revision.
+          register() {
+            local family=$1 container=$2 image=$3
+            aws ecs describe-task-definition --task-definition "$family" --query taskDefinition --output json \
+              | jq --arg c "$container" --arg i "$image" '
+                  del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
+                      .registeredAt, .registeredBy, .deregisteredAt)
+                  | (.containerDefinitions[] | select(.name == $c) | .image) = $i' > "${family}.json"
+            aws ecs register-task-definition --cli-input-json "file://${family}.json" \
+              --query taskDefinition.taskDefinitionArn --output text
+          }
+
+          {
+            echo "migrate=$(register "${NAME_PREFIX}-migrate" migrate "$backend")"
+            echo "api=$(register "${NAME_PREFIX}-api" api "$backend")"
+            echo "worker=$(register "${NAME_PREFIX}-worker" worker "$backend")"
+            echo "web=$(register "${NAME_PREFIX}-web" web "$web")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run database migrations (fails the deploy on a non-zero exit)
+        env:
+          MIGRATE_TASK_DEFINITION: ${{ steps.taskdefs.outputs.migrate }}
+        run: |
+          set -euo pipefail
+          # Reuse the network placement of the API service, so no subnet or security group ids are configured here.
+          network=$(aws ecs describe-services --cluster "$NAME_PREFIX" --services "${NAME_PREFIX}-api" \
+            --query 'services[0].networkConfiguration' --output json)
+          task_arn=$(aws ecs run-task --cluster "$NAME_PREFIX" --launch-type FARGATE \
+            --task-definition "$MIGRATE_TASK_DEFINITION" --network-configuration "$network" \
+            --query 'tasks[0].taskArn' --output text)
+          if [ -z "$task_arn" ] || [ "$task_arn" = "None" ]; then
+            echo "::error::run-task did not start the migration task"
+            exit 1
+          fi
+          echo "Migration task: $task_arn"
+          aws ecs wait tasks-stopped --cluster "$NAME_PREFIX" --tasks "$task_arn"
+
+          task_id=${task_arn##*/}
+          echo "::group::migration output"
+          aws logs get-log-events --log-group-name "/ecs/${NAME_PREFIX}/migrate" \
+            --log-stream-name "migrate/migrate/${task_id}" --limit 200 \
+            --query 'events[].message' --output text || echo "(no log stream found)"
+          echo "::endgroup::"
+
+          exit_code=$(aws ecs describe-tasks --cluster "$NAME_PREFIX" --tasks "$task_arn" \
+            --query "tasks[0].containers[?name=='migrate'].exitCode | [0]" --output text)
+          if [ "$exit_code" != "0" ]; then
+            reason=$(aws ecs describe-tasks --cluster "$NAME_PREFIX" --tasks "$task_arn" \
+              --query 'tasks[0].stoppedReason' --output text)
+            echo "::error::Migration failed (exit code: ${exit_code}; ${reason}). Services were not touched."
+            exit 1
+          fi
+
+      - name: Update services and wait for them to settle
+        env:
+          API_TASK_DEFINITION: ${{ steps.taskdefs.outputs.api }}
+          WORKER_TASK_DEFINITION: ${{ steps.taskdefs.outputs.worker }}
+          WEB_TASK_DEFINITION: ${{ steps.taskdefs.outputs.web }}
+        run: |
+          set -euo pipefail
+          for role in api worker web; do
+            var="${role^^}_TASK_DEFINITION"
+            aws ecs update-service --cluster "$NAME_PREFIX" --service "${NAME_PREFIX}-${role}" \
+              --task-definition "${!var}" --query 'service.serviceName' --output text
+          done
+
+          aws ecs wait services-stable --cluster "$NAME_PREFIX" \
+            --services "${NAME_PREFIX}-api" "${NAME_PREFIX}-worker" "${NAME_PREFIX}-web"
+
+          # The ECS circuit breaker rolls a failing deployment back automatically, and a rolled-back
+          # service also becomes "stable". So check that each service really runs the new revision.
+          failed=0
+          for role in api worker web; do
+            var="${role^^}_TASK_DEFINITION"
+            running=$(aws ecs describe-services --cluster "$NAME_PREFIX" --services "${NAME_PREFIX}-${role}" \
+              --query 'services[0].taskDefinition' --output text)
+            if [ "$running" != "${!var}" ]; then
+              echo "::error::${role} is running ${running}, not ${!var}: the deployment failed and ECS rolled it back"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - name: Smoke test through the load balancer
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_URL" ]; then
+            dns=$(aws elbv2 describe-load-balancers --names "${NAME_PREFIX}-alb" \
+              --query 'LoadBalancers[0].DNSName' --output text)
+            APP_URL="http://${dns}"
+          fi
+          echo "Smoke testing ${APP_URL}"
+          curl --fail --silent --show-error --location --retry 10 --retry-delay 6 --retry-all-errors \
+            --max-time 10 "${APP_URL}/readyz"
+          echo
+          curl --fail --silent --show-error --location --max-time 10 --output /dev/null "${APP_URL}/"
+          echo "Deployed ${IMAGE_TAG}"
