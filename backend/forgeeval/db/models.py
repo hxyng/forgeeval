@@ -339,6 +339,11 @@ class RunItem(CreatedAt, Base):
             "lease_expires_at",
             postgresql_where=text("status = 'leased'"),
         ),
+        Index(
+            "ix_run_items_retry_due",
+            "next_attempt_at",
+            postgresql_where=text("status = 'retry_wait'"),
+        ),
     )
     id: Mapped[uuid.UUID] = pk()
     run_id: Mapped[uuid.UUID] = fk("eval_runs.id", ondelete="CASCADE")
@@ -347,6 +352,7 @@ class RunItem(CreatedAt, Base):
         pg_enum(ItemStatus), server_default=ItemStatus.queued.value
     )
     attempt: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     leased_by: Mapped[str | None] = mapped_column(Text)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

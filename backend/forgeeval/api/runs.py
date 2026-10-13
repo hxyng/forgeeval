@@ -263,7 +263,10 @@ def create_run(
 
     try:
         for i in range(0, len(item_ids), ENQUEUE_CHUNK):
-            queue.enqueue(item_ids[i : i + ENQUEUE_CHUNK])
+            chunk = item_ids[i : i + ENQUEUE_CHUNK]
+            queue.enqueue(chunk)
+            db.execute(update(RunItem).where(RunItem.id.in_(chunk)).values(enqueued_at=func.now()))
+            db.commit()
     except Exception:
         # Items stay 'queued' in Postgres; the worker reaper re-enqueues them.
         log.exception("enqueue failed for run %s; reaper will recover it", run.id)
