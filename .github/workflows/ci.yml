@@ -21,6 +21,11 @@ jobs:
         ports: ["5433:5432"]
         options: >-
           --health-cmd "pg_isready -U forgeeval" --health-interval 2s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

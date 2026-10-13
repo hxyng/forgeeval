@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://forgeeval:forgeeval@localhost:5433/forgeeval"
     redis_url: str = "redis://localhost:6379/0"
+    queue_stream: str = "forgeeval:eval-jobs"
     s3_endpoint_url: str | None = None
     s3_bucket: str = "forgeeval-local"
     api_key_pepper: str = "local-dev-pepper-change-me"
