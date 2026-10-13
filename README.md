@@ -104,6 +104,13 @@ pnpm e2e            # Playwright; needs FORGEEVAL_API_KEY, a seeded stack and a 
 The API client is typed from [`docs/openapi.json`](docs/openapi.json). After the API contract changes,
 run `pnpm gen:api` and commit `web/src/api/schema.d.ts`; CI fails when it is stale (`pnpm check:api`).
 
+## Deploy to AWS
+
+The production environment (ECS Fargate, ALB, RDS PostgreSQL, SQS, S3, X-Ray and CloudWatch) is
+described in Terraform under [`infra/`](infra/README.md): architecture, bootstrap and apply steps, how to
+set the model API key, a monthly cost estimate and teardown. The checks (`fmt`, `validate`, `tflint`,
+Trivy, `terraform test` with a mocked provider) run without an AWS account.
+
 ## Layout
 
 | Path | What lives there |
@@ -114,5 +121,5 @@ run `pnpm gen:api` and commit `web/src/api/schema.d.ts`; CI fails when it is sta
 | `backend/migrations` | Alembic migrations |
 | `sdk/` | Python client SDK: trace capture, local PII redaction, batching, retries |
 | `web/` | React + TypeScript web console: runs, failing cases, compare, gates, traces |
-| `infra/` | Terraform for AWS (next layer); `infra/local` holds emulator config |
+| `infra/` | Terraform for the AWS production environment (`bootstrap`, `envs/prod`, `modules/`); `infra/local` holds emulator config |
 | `docs/adr` | Architecture decision records |
