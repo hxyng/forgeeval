@@ -44,3 +44,14 @@ variable "state_noncurrent_version_days" {
   type        = number
   default     = 90
 }
+
+variable "console_hosting" {
+  description = "Must match console_hosting in infra/envs/prod. s3_cloudfront adds the deploy role permissions to upload the built console to its bucket and invalidate CloudFront; ecs adds none."
+  type        = string
+  default     = "ecs"
+
+  validation {
+    condition     = contains(["ecs", "s3_cloudfront"], var.console_hosting)
+    error_message = "console_hosting must be \"ecs\" or \"s3_cloudfront\"."
+  }
+}

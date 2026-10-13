@@ -70,9 +70,25 @@ variable "payload_retention_days" {
 }
 
 variable "api_desired_count" {
-  description = "Number of API tasks."
+  description = "Number of API tasks. 2 spreads them over both zones, so one failing task or zone does not stop the API and rolling deploys keep capacity. 1 saves about $14 a month and means a single point of failure: ECS replaces a failed task, but requests fail for the one to two minutes that takes, and a deploy briefly runs two tasks."
   type        = number
   default     = 2
+
+  validation {
+    condition     = var.api_desired_count >= 1
+    error_message = "api_desired_count must be at least 1."
+  }
+}
+
+variable "worker_min_count" {
+  description = "Minimum number of worker tasks. 0 scales the worker to zero when the queue is empty and back up on queue backlog (step scaling on SQS metrics, see modules/compute/scaling.tf); the first job then waits for a task to start, about one to two minutes."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.worker_min_count >= 0 && var.worker_min_count <= var.worker_max
+    error_message = "worker_min_count must be between 0 and worker_max."
+  }
 }
 
 variable "worker_max" {
@@ -138,4 +154,50 @@ variable "aurora_auto_pause_seconds" {
   description = "Idle seconds before Aurora pauses to 0 ACU, 300 to 86400 (aurora-serverless only)."
   type        = number
   default     = 300
+}
+
+# --- lean always-on options (see infra/README.md, "Lean always-on") --------------------------
+
+variable "cpu_architecture" {
+  description = "X86_64 or ARM64 (Graviton, about 20% cheaper) for every task definition. The deploy workflow reads it from the task definition and builds images for it. With ARM64 in us-east-1 the VPC skips zone use1-az3, where Fargate has no ARM64 capacity."
+  type        = string
+  default     = "X86_64"
+
+  validation {
+    condition     = contains(["X86_64", "ARM64"], var.cpu_architecture)
+    error_message = "cpu_architecture must be \"X86_64\" or \"ARM64\"."
+  }
+}
+
+variable "worker_capacity" {
+  description = "FARGATE or FARGATE_SPOT for the worker service only (the API and web stay on on-demand Fargate). Spot is discounted but can be interrupted with a two-minute warning, and Fargate never falls back to on-demand when Spot capacity is short."
+  type        = string
+  default     = "FARGATE"
+
+  validation {
+    condition     = contains(["FARGATE", "FARGATE_SPOT"], var.worker_capacity)
+    error_message = "worker_capacity must be \"FARGATE\" or \"FARGATE_SPOT\"."
+  }
+}
+
+variable "console_hosting" {
+  description = "ecs: the console is an nginx task behind the load balancer. s3_cloudfront: static files in a private S3 bucket behind CloudFront (no web service or target group); CloudFront also routes /v1/*, /docs and /openapi.json to the load balancer."
+  type        = string
+  default     = "ecs"
+
+  validation {
+    condition     = contains(["ecs", "s3_cloudfront"], var.console_hosting)
+    error_message = "console_hosting must be \"ecs\" or \"s3_cloudfront\"."
+  }
+
+  validation {
+    condition     = var.console_hosting != "s3_cloudfront" || var.acm_certificate_arn == null
+    error_message = "console_hosting = \"s3_cloudfront\" reaches the load balancer over HTTP at its own DNS name, which cannot carry a certificate: leave acm_certificate_arn null (CloudFront terminates HTTPS)."
+  }
+}
+
+variable "container_insights" {
+  description = "Container Insights on the ECS cluster. false drops its per-task metrics (cost); X-Ray traces and the application's EMF metrics stay. Worker scaling then uses step scaling on SQS metrics."
+  type        = bool
+  default     = true
 }

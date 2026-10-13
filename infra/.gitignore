@@ -4,5 +4,7 @@
 crash.log
 *.tfvars
 !*.tfvars.example
+# Scan-only settings with no secrets, read by the CI Trivy job.
+!envs/prod/security-scan.tfvars
 # Module directories are test roots only; the lock files that matter live in envs/prod and bootstrap.
 modules/**/.terraform.lock.hcl

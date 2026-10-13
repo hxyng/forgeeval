@@ -81,3 +81,40 @@ output "service_health_check_grace_periods" {
     { for s in aws_ecs_service.web : "web" => s.health_check_grace_period_seconds },
   )
 }
+
+output "task_runtime_platforms" {
+  description = "CPU architecture of each task definition."
+  value       = { for k, t in aws_ecs_task_definition.this : k => one(t.runtime_platform).cpu_architecture }
+}
+
+output "service_capacity_providers" {
+  description = "Capacity providers each service is pinned to (empty list: plain Fargate launch type). Empty map while asleep."
+  value = merge(
+    { for s in aws_ecs_service.api : "api" => [for c in s.capacity_provider_strategy : c.capacity_provider] },
+    { for s in aws_ecs_service.web : "web" => [for c in s.capacity_provider_strategy : c.capacity_provider] },
+    { for s in aws_ecs_service.worker : "worker" => [for c in s.capacity_provider_strategy : c.capacity_provider] },
+  )
+}
+
+output "service_desired_counts" {
+  description = "Initial desired count of each service (the worker count is then owned by autoscaling). Empty map while asleep."
+  value = merge(
+    { for s in aws_ecs_service.api : "api" => s.desired_count },
+    { for s in aws_ecs_service.web : "web" => s.desired_count },
+    { for s in aws_ecs_service.worker : "worker" => s.desired_count },
+  )
+}
+
+output "worker_scaling" {
+  description = "Worker autoscaling: mode (target-tracking or step), minimum and maximum. Null while asleep."
+  value = one([for t in aws_appautoscaling_target.worker : {
+    mode = local.step_scaling ? "step" : "target-tracking"
+    min  = t.min_capacity
+    max  = t.max_capacity
+  }])
+}
+
+output "container_insights" {
+  description = "Container Insights setting of the cluster."
+  value       = one(aws_ecs_cluster.this.setting).value
+}

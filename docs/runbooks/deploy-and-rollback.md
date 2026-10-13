@@ -42,7 +42,9 @@ AWS credentials for the account (your own admin login; CI uses OIDC and never ho
      | `TF_STATE_BUCKET` | `state_bucket` from the bootstrap output (used by the plan job) |
      | `AWS_REGION` | only if not `us-east-1` |
      | `NAME_PREFIX` | only if not `forgeeval-prod` |
-     | `APP_URL` | only with a domain and certificate: the URL the smoke test calls, e.g. `https://eval.example.com` |
+     | `APP_URL` | only with a domain and certificate: the URL the smoke test calls, e.g. `https://eval.example.com`. With `console_hosting = "s3_cloudfront"`: `terraform output app_url` |
+     | `CONSOLE_HOSTING` | only with the lean option `console_hosting = "s3_cloudfront"`: set it to `s3_cloudfront` (default `ecs`) |
+     | `CLOUDFRONT_DISTRIBUTION_ID` | only with `s3_cloudfront`: `terraform output cloudfront_distribution_id` |
 
    The variables must be set at repository level, because the workflows test them in a job-level
    condition. Until they exist both workflows skip cleanly.
@@ -74,6 +76,13 @@ Merge to `main`. `deploy.yml`:
 5. fails if any service ended up on a different revision than the one just deployed (the ECS circuit
    breaker rolled it back);
 6. smoke-tests `/readyz` and `/` through the load balancer.
+
+With the lean options (`infra/README.md`, "Lean always-on"): the architecture of the images comes from the
+`api` task definition (`cpu_architecture = "ARM64"` builds `linux/arm64`, tagged `<sha>-arm64`), and with
+`CONSOLE_HOSTING=s3_cloudfront` steps 1, 2, 4 and 5 cover only `api` and `worker`, and the workflow instead
+builds the console, syncs it to the console bucket and invalidates CloudFront (the `web` service does not
+exist). To roll the console back, deploy the previous commit again: it rebuilds and re-uploads that commit's
+console. `bootstrap` must have been applied with the same `console_hosting`, or the upload is denied.
 
 Deploys are serialized (`concurrency: deploy-production`).
 

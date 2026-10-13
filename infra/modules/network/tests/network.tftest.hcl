@@ -76,3 +76,21 @@ run "tasks_move_to_private_with_nat" {
     error_message = "With NAT, tasks must run in the private subnets."
   }
 }
+
+run "excluded_zones_are_passed_to_the_zone_lookup" {
+  variables {
+    exclude_zone_ids = ["use1-az3"]
+  }
+
+  assert {
+    condition     = output.excluded_zone_ids == toset(["use1-az3"])
+    error_message = "Excluded zone IDs reach the availability zone lookup."
+  }
+}
+
+run "no_zone_is_excluded_by_default" {
+  assert {
+    condition     = length(output.excluded_zone_ids) == 0
+    error_message = "Default VPC layout is unchanged."
+  }
+}

@@ -131,3 +131,64 @@ run "existing_oidc_provider_can_be_reused" {
     error_message = "No second provider may be created."
   }
 }
+
+run "default_deploy_policy_has_no_console_permissions" {
+  assert {
+    condition     = !anytrue([for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement : anytrue([for a in flatten([s.Action]) : startswith(a, "cloudfront:") || startswith(a, "s3:")])])
+    error_message = "With console_hosting = ecs the deploy role gets no S3 or CloudFront permissions."
+  }
+}
+
+run "console_on_cloudfront_adds_only_upload_and_invalidate" {
+  variables {
+    console_hosting = "s3_cloudfront"
+  }
+
+  assert {
+    condition = (
+      toset(flatten([for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement : s.Action if s.Sid == "ConsoleUpload"])) == toset(["s3:PutObject", "s3:DeleteObject"]) &&
+      one([for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement : s.Resource if s.Sid == "ConsoleUpload"]) == "arn:aws:s3:::forgeeval-prod-console-${data.aws_caller_identity.current.account_id}/*" &&
+      one([for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement : s.Resource if s.Sid == "ConsoleBucketList"]) == "arn:aws:s3:::forgeeval-prod-console-${data.aws_caller_identity.current.account_id}"
+    )
+    error_message = "Upload is limited to the console bucket and to put and delete."
+  }
+
+  assert {
+    condition = (
+      toset(flatten([for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement : s.Action if s.Sid == "ConsoleInvalidate"])) == toset(["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]) &&
+      one([for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement : s.Resource if s.Sid == "ConsoleInvalidate"]) == "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*"
+    )
+    error_message = "CloudFront access is invalidation only, within this account."
+  }
+
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
+      s.Resource != "*" || contains(["EcrLogin", "EcsTaskDefinitions", "FindLoadBalancer"], s.Sid)
+    ])
+    error_message = "Still no Resource * beyond the three APIs that lack resource-level permissions."
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role.deploy.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:hxyng/forgeeval:environment:production"
+    error_message = "The deploy role trust is unchanged: the production environment only."
+  }
+
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
+      !anytrue([for a in flatten([s.Action]) : endswith(a, ":*")])
+    ])
+    error_message = "No service-wide wildcard actions."
+  }
+}
+
+run "invalid_console_hosting_is_rejected" {
+  command = plan
+
+  variables {
+    console_hosting = "cdn"
+  }
+
+  expect_failures = [var.console_hosting]
+}

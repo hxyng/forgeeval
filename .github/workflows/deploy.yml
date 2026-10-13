@@ -1,8 +1,14 @@
 name: deploy
 
-# Builds both images, migrates the database, rolls the three ECS services and smoke-tests the
-# load balancer. It does nothing until the repository variable AWS_DEPLOY_ROLE_ARN is set
-# (see docs/runbooks/deploy-and-rollback.md). Credentials come from OIDC; there are no AWS secrets.
+# Builds the images, migrates the database, rolls the ECS services and smoke-tests the load balancer.
+# It does nothing until the repository variable AWS_DEPLOY_ROLE_ARN is set (see
+# docs/runbooks/deploy-and-rollback.md). Credentials come from OIDC; there are no AWS secrets.
+#
+# Two Terraform options change what it does (infra/README.md, "Lean always-on"):
+#   cpu_architecture = ARM64   images are built for linux/arm64. The architecture is read from the api
+#                              task definition, so it always agrees with what Terraform registered.
+#   console_hosting = s3_cloudfront   (repository variable CONSOLE_HOSTING) no web image or service:
+#                              the console is built, synced to S3 and CloudFront is invalidated.
 
 on:
   workflow_dispatch:
@@ -20,7 +26,8 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   NAME_PREFIX: ${{ vars.NAME_PREFIX || 'forgeeval-prod' }}
-  IMAGE_TAG: ${{ github.sha }}
+  IMAGE_SHA: ${{ github.sha }}
+  CONSOLE_HOSTING: ${{ vars.CONSOLE_HOSTING || 'ecs' }}
 
 defaults:
   run:
@@ -61,6 +68,36 @@ jobs:
             echo "awake=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # The task definitions are the source of truth for the CPU architecture. An ARM64 image gets its
+      # own tag suffix: tags are immutable, so a re-run after switching architecture must not reuse the
+      # other architecture's image.
+      - name: Read the CPU architecture from the task definition
+        id: arch
+        if: steps.awake.outputs.awake == 'true'
+        run: |
+          set -euo pipefail
+          arch=$(aws ecs describe-task-definition --task-definition "${NAME_PREFIX}-api" \
+            --query 'taskDefinition.runtimePlatform.cpuArchitecture' --output text)
+          case "$arch" in
+            ARM64) platform=linux/arm64; suffix=-arm64 ;;
+            X86_64|None) platform=linux/amd64; suffix= ;;
+            *) echo "::error::Unexpected cpuArchitecture '$arch' in ${NAME_PREFIX}-api"; exit 1 ;;
+          esac
+          echo "Building for ${platform} (task definition architecture: ${arch})"
+          {
+            echo "platform=${platform}"
+            echo "tag=${IMAGE_SHA}${suffix}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU (cross-building for arm64 on an x86 runner)
+        if: steps.awake.outputs.awake == 'true' && steps.arch.outputs.platform == 'linux/arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.awake.outputs.awake == 'true'
+
       - name: Log in to ECR
         id: ecr
         if: steps.awake.outputs.awake == 'true'
@@ -70,9 +107,14 @@ jobs:
         if: steps.awake.outputs.awake == 'true'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
+          PLATFORM: ${{ steps.arch.outputs.platform }}
+          IMAGE_TAG: ${{ steps.arch.outputs.tag }}
         run: |
           set -euo pipefail
-          for image in backend web; do
+          images=(backend)
+          # The console is static files on S3 and CloudFront in that mode: no web image.
+          if [ "$CONSOLE_HOSTING" = "ecs" ]; then images+=(web); fi
+          for image in "${images[@]}"; do
             repository="${NAME_PREFIX}-${image}"
             # Tags are immutable: a re-run of the same commit reuses the image already pushed.
             existing=$(aws ecr batch-get-image --repository-name "$repository" \
@@ -81,8 +123,8 @@ jobs:
               echo "$repository:$IMAGE_TAG already exists, skipping build"
               continue
             fi
-            docker build --tag "${REGISTRY}/${repository}:${IMAGE_TAG}" "$image"
-            docker push "${REGISTRY}/${repository}:${IMAGE_TAG}"
+            docker buildx build --platform "$PLATFORM" --provenance=false --push \
+              --tag "${REGISTRY}/${repository}:${IMAGE_TAG}" "$image"
           done
 
       - name: Register task definitions with the new images
@@ -90,6 +132,7 @@ jobs:
         id: taskdefs
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.arch.outputs.tag }}
         run: |
           set -euo pipefail
           backend="${REGISTRY}/${NAME_PREFIX}-backend:${IMAGE_TAG}"
@@ -112,7 +155,9 @@ jobs:
             echo "migrate=$(register "${NAME_PREFIX}-migrate" migrate "$backend")"
             echo "api=$(register "${NAME_PREFIX}-api" api "$backend")"
             echo "worker=$(register "${NAME_PREFIX}-worker" worker "$backend")"
-            echo "web=$(register "${NAME_PREFIX}-web" web "$web")"
+            if [ "$CONSOLE_HOSTING" = "ecs" ]; then
+              echo "web=$(register "${NAME_PREFIX}-web" web "$web")"
+            fi
           } >> "$GITHUB_OUTPUT"
 
       - name: Run database migrations (fails the deploy on a non-zero exit)
@@ -158,19 +203,22 @@ jobs:
           WEB_TASK_DEFINITION: ${{ steps.taskdefs.outputs.web }}
         run: |
           set -euo pipefail
-          for role in api worker web; do
+          roles=(api worker)
+          if [ "$CONSOLE_HOSTING" = "ecs" ]; then roles+=(web); fi
+          for role in "${roles[@]}"; do
             var="${role^^}_TASK_DEFINITION"
             aws ecs update-service --cluster "$NAME_PREFIX" --service "${NAME_PREFIX}-${role}" \
               --task-definition "${!var}" --query 'service.serviceName' --output text
           done
 
-          aws ecs wait services-stable --cluster "$NAME_PREFIX" \
-            --services "${NAME_PREFIX}-api" "${NAME_PREFIX}-worker" "${NAME_PREFIX}-web"
+          services=()
+          for role in "${roles[@]}"; do services+=("${NAME_PREFIX}-${role}"); done
+          aws ecs wait services-stable --cluster "$NAME_PREFIX" --services "${services[@]}"
 
           # The ECS circuit breaker rolls a failing deployment back automatically, and a rolled-back
           # service also becomes "stable". So check that each service really runs the new revision.
           failed=0
-          for role in api worker web; do
+          for role in "${roles[@]}"; do
             var="${role^^}_TASK_DEFINITION"
             running=$(aws ecs describe-services --cluster "$NAME_PREFIX" --services "${NAME_PREFIX}-${role}" \
               --query 'services[0].taskDefinition' --output text)
@@ -181,20 +229,83 @@ jobs:
           done
           exit "$failed"
 
+      # console_hosting = s3_cloudfront: build the single-page app and publish it. Hashed files under
+      # assets/ never change, so they are cached for a year and never deleted (a browser holding the
+      # previous index.html still finds its files); index.html is uploaded last and must not be cached.
+      - name: Set up pnpm
+        if: steps.awake.outputs.awake == 'true' && env.CONSOLE_HOSTING == 's3_cloudfront'
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - name: Set up Node
+        if: steps.awake.outputs.awake == 'true' && env.CONSOLE_HOSTING == 's3_cloudfront'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Build the console
+        if: steps.awake.outputs.awake == 'true' && env.CONSOLE_HOSTING == 's3_cloudfront'
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Publish the console to S3 and invalidate CloudFront
+        if: steps.awake.outputs.awake == 'true' && env.CONSOLE_HOSTING == 's3_cloudfront'
+        env:
+          DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DISTRIBUTION_ID" ]; then
+            echo "::error::Set the repository variable CLOUDFRONT_DISTRIBUTION_ID (terraform output cloudfront_distribution_id)."
+            exit 1
+          fi
+          account=$(aws sts get-caller-identity --query Account --output text)
+          bucket="${NAME_PREFIX}-console-${account}"
+          aws s3 sync web/dist/assets "s3://${bucket}/assets" \
+            --cache-control "public, max-age=31536000, immutable"
+          aws s3 sync web/dist "s3://${bucket}" --exclude "assets/*" --exclude index.html --delete \
+            --cache-control "public, max-age=3600"
+          aws s3 cp web/dist/index.html "s3://${bucket}/index.html" \
+            --cache-control "no-cache" --content-type "text/html; charset=utf-8"
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" \
+            --query Invalidation.Id --output text
+
       - name: Smoke test through the load balancer
         if: steps.awake.outputs.awake == 'true'
         env:
           APP_URL: ${{ vars.APP_URL }}
+          IMAGE_TAG: ${{ steps.arch.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ -z "$APP_URL" ]; then
-            dns=$(aws elbv2 describe-load-balancers --names "${NAME_PREFIX}-alb" \
-              --query 'LoadBalancers[0].DNSName' --output text)
-            APP_URL="http://${dns}"
+          dns=$(aws elbv2 describe-load-balancers --names "${NAME_PREFIX}-alb" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+          if [ "$CONSOLE_HOSTING" = "s3_cloudfront" ]; then
+            # /readyz is not routed through CloudFront (it would fall through to the console), so
+            # probe the load balancer directly, then check both CloudFront paths when its URL is known.
+            echo "Smoke testing http://${dns}"
+            curl --fail --silent --show-error --location --retry 10 --retry-delay 6 --retry-all-errors \
+              --max-time 10 "http://${dns}/readyz"
+            echo
+            if [ -n "$APP_URL" ]; then
+              curl --fail --silent --show-error --location --retry 10 --retry-delay 6 --retry-all-errors \
+                --max-time 10 --output /dev/null "${APP_URL}/"
+              curl --fail --silent --show-error --location --retry 10 --retry-delay 6 --retry-all-errors \
+                --max-time 10 --output /dev/null "${APP_URL}/openapi.json"
+            else
+              echo "::notice::Set the repository variable APP_URL to the CloudFront URL (terraform output app_url) to smoke test the console and the API through it."
+            fi
+          else
+            if [ -z "$APP_URL" ]; then
+              APP_URL="http://${dns}"
+            fi
+            echo "Smoke testing ${APP_URL}"
+            curl --fail --silent --show-error --location --retry 10 --retry-delay 6 --retry-all-errors \
+              --max-time 10 "${APP_URL}/readyz"
+            echo
+            curl --fail --silent --show-error --location --max-time 10 --output /dev/null "${APP_URL}/"
           fi
-          echo "Smoke testing ${APP_URL}"
-          curl --fail --silent --show-error --location --retry 10 --retry-delay 6 --retry-all-errors \
-            --max-time 10 "${APP_URL}/readyz"
-          echo
-          curl --fail --silent --show-error --location --max-time 10 --output /dev/null "${APP_URL}/"
           echo "Deployed ${IMAGE_TAG}"

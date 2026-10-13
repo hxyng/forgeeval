@@ -1,5 +1,6 @@
 locals {
-  aurora = var.database_engine == "aurora-serverless"
+  aurora     = var.database_engine == "aurora-serverless"
+  console_s3 = var.console_hosting == "s3_cloudfront"
 }
 
 module "network" {
@@ -8,6 +9,9 @@ module "network" {
   name_prefix        = var.name_prefix
   vpc_cidr           = var.vpc_cidr
   enable_nat_gateway = var.enable_nat_gateway
+
+  # Fargate ARM64 is not offered in one us-east-1 zone (use1-az3, AWS ECS docs); keep the VPC out of it.
+  exclude_zone_ids = var.cpu_architecture == "ARM64" && var.region == "us-east-1" ? ["use1-az3"] : []
 }
 
 module "data" {
@@ -43,6 +47,18 @@ module "alb" {
   security_group_id   = module.network.alb_security_group_id
   acm_certificate_arn = var.acm_certificate_arn
   access_logs_bucket  = var.alb_access_logs_bucket
+  web_enabled         = !local.console_s3
+}
+
+# Console on S3 + CloudFront. The bucket and distribution persist while the environment sleeps; only
+# the API origin name changes (the load balancer is recreated on every wake-up).
+module "console" {
+  source = "../../modules/console"
+  count  = local.console_s3 ? 1 : 0
+
+  name_prefix   = var.name_prefix
+  alb_dns_name  = one(module.alb[*].dns_name)
+  force_destroy = var.teardown_force_delete
 }
 
 module "compute" {
@@ -57,6 +73,10 @@ module "compute" {
   services_enabled        = var.active
   api_target_group_arn    = one(module.alb[*].api_target_group_arn)
   web_target_group_arn    = one(module.alb[*].web_target_group_arn)
+  web_enabled             = !local.console_s3
+  cpu_architecture        = var.cpu_architecture
+  worker_capacity         = var.worker_capacity
+  container_insights      = var.container_insights
   alb_listener_arns       = flatten(module.alb[*].listener_arns)
 
   # Aurora can take ~15 s to resume (30 s or more after a day paused): let new tasks wait for it.
@@ -78,6 +98,7 @@ module "compute" {
 
   image_tag         = var.image_tag
   api_desired_count = var.api_desired_count
+  worker_min        = var.worker_min_count
   worker_max        = var.worker_max
   enable_ecs_exec   = var.enable_ecs_exec
   ecr_force_delete  = var.teardown_force_delete

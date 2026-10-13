@@ -13,7 +13,8 @@ below run offline (mocked provider), and a `plan` runs in CI once an AWS account
 | `modules/network` | VPC over 2 AZs, public and private subnets, optional NAT, security groups |
 | `modules/data` | RDS PostgreSQL 16 or Aurora Serverless v2 (`database_engine`), SQS `eval-jobs` and DLQ, S3 payload bucket, Secrets Manager |
 | `modules/alb` | Internet-facing ALB, listeners, target groups, path rules |
-| `modules/compute` | ECR, ECS cluster, task definitions, services, worker autoscaling, IAM |
+| `modules/compute` | ECR, ECS cluster, task definitions, services, worker autoscaling (target tracking, or step scaling for scale-to-zero), IAM |
+| `modules/console` | Optional console hosting: private S3 bucket and CloudFront (OAC, SPA rewrite, API paths to the ALB); used with `console_hosting = "s3_cloudfront"` |
 | `modules/observability` | SNS topic (own KMS key) and the six alarms (four while asleep) |
 | `scripts/demo.sh` | Wake (`up`), sleep (`down`) and `status` for demo mode |
 | `local/` | Emulator config for local development (not Terraform) |
@@ -88,7 +89,7 @@ through a write-only argument, so it is not stored in Terraform state.
 terraform fmt -check -recursive infra
 ( cd infra/envs/prod  && terraform init -backend=false && terraform validate && terraform test )
 ( cd infra/bootstrap  && terraform init -backend=false && terraform validate && terraform test )
-for m in network data alb compute observability; do
+for m in network data alb compute observability console; do
   ( cd infra/modules/$m && terraform init -backend=false && terraform test ); done
 ( cd infra && tflint --init && tflint --recursive )
 trivy config --skip-dirs '**/.terraform' --ignorefile infra/.trivyignore.yaml \
@@ -247,6 +248,124 @@ the $107 awake month. A four-hour demo costs about $0.50 (RDS) or $0.92 (Aurora)
 price; Aurora keeps billing for 5 minutes after the last connection before it pauses. With
 `enable_nat_gateway = true` the NAT gateway ($0.045/h plus its public IPv4, about $33/month) is not
 removed by `active = false`: use demo mode with the default `false`.
+
+## Lean always-on: about $62 a month instead of $107
+
+Six opt-in variables in `envs/prod` cut the always-on bill without removing the ALB, the database or any
+security control. Every default keeps today's behaviour (the tests assert it). Ready-made `terraform.tfvars`:
+
+```hcl
+cpu_architecture   = "ARM64"          # Graviton: about 20% cheaper Fargate
+worker_capacity    = "FARGATE_SPOT"   # worker only; api and web stay on-demand
+worker_min_count   = 0                # scale to zero when the queue is empty
+api_desired_count  = 1                # 2 keeps HA, see below
+console_hosting    = "s3_cloudfront"  # no web task: static files on S3 behind CloudFront
+container_insights = false            # drop per-task metrics; traces and EMF metrics stay
+```
+
+If you use `console_hosting = "s3_cloudfront"` also set `console_hosting` in `bootstrap` (and apply it), so the
+deploy role may upload to the console bucket, see [the deploy workflow](#deploy-workflow-changes).
+
+| Variable | Values (default first) | What it does | Trade-off |
+| --- | --- | --- | --- |
+| `cpu_architecture` | `X86_64`, `ARM64` | `runtime_platform` of all four task definitions. The deploy workflow reads it from the `api` task definition and builds `linux/arm64` images (tag suffix `-arm64`) | Builds run under QEMU on the x86 runner (slower). ADOT `v0.49.0` is multi-arch (checked: amd64 and arm64). In `us-east-1` the VPC skips zone `use1-az3`, where Fargate has no ARM64 capacity |
+| `worker_capacity` | `FARGATE`, `FARGATE_SPOT` | Capacity provider strategy on the worker service only | Spot tasks get a two-minute warning (SIGTERM, then SIGKILL after `stopTimeout` = 120 s). The worker handles SIGTERM and SQS redelivers an unacknowledged message after the 120 s visibility timeout ([ADR 0001](../docs/adr/0001-job-queue.md)). Fargate never falls back to on-demand: when Spot capacity is short, jobs wait |
+| `worker_min_count` | `1`, `0` to `worker_max` | Minimum worker tasks | At 0 the first job waits for a task to start (about one to two minutes, unmeasured) |
+| `api_desired_count` | `2`, `1` | API tasks | With 1, a failed task or a deploy leaves a gap: ECS replaces the task in about one to two minutes (unmeasured), during which the ALB has no healthy target. With 2 (one per zone) a single failure is invisible and rolling deploys keep capacity. Save about $12 for the single point of failure |
+| `console_hosting` | `ecs`, `s3_cloudfront` | Where the console is served from | See below |
+| `container_insights` | `true`, `false` | Container Insights on the cluster | No per-task CPU and memory dashboards (basic ECS metrics stay). X-Ray traces and the application's EMF metrics are unaffected |
+
+### Worker scale-to-zero
+
+With `worker_min_count = 0` (or `container_insights = false`) the target-tracking policy is replaced by step
+scaling in `modules/compute/scaling.tf`. The reason is concrete: the target-tracking expression divides the
+SQS backlog by `ECS/ContainerInsights RunningTaskCount`, a metric that only exists with Container Insights
+on and has no datapoints while 0 tasks run, so it could neither start the first worker nor survive Insights
+being off. The step policy needs only SQS metrics, which SQS publishes whether or not a worker exists:
+
+- alarm `worker-backlog`: at least one visible message for one minute adds 1 worker (backlog under 10), 2
+  (10 to 49) or 4 (50 or more), 120 s cooldown, capped by `worker_max`. Application Auto Scaling may raise
+  the desired count from 0 because the target's `min_capacity` is 0.
+- alarm `worker-idle`: nothing visible and nothing in flight for `worker_idle_minutes` (10) returns the
+  count to `worker_min_count` (an exact capacity, not a decrement). A busy worker is therefore never scaled
+  in; with Spot it only disappears when AWS reclaims it.
+- Unlike target tracking, step scaling does not size the fleet proportionally to the backlog: it adds
+  workers in steps while a backlog persists.
+
+### Console on S3 and CloudFront
+
+`console_hosting = "s3_cloudfront"` removes the `web` ECS service, task definition, log group and ALB target
+group (unmatched ALB paths answer 404) and adds `modules/console`:
+
+- a private S3 bucket `<name_prefix>-console-<account id>` (all four public-access blocks, SSE-S3, TLS-only
+  policy) readable only by this distribution through Origin Access Control (`AWS:SourceArn` condition);
+- one CloudFront distribution, `PriceClass_100`, HTTPS only for viewers. Default behaviour: the bucket.
+  Behaviours for `/v1/*`, `/docs` and `/openapi.json`: the ALB (all methods, no caching, every viewer header
+  forwarded), so the console stays same-origin and the API needs no CORS;
+- a viewer-request CloudFront Function on the console behaviour rewrites extensionless paths to
+  `/index.html` (SPA routing). It deliberately replaces the usual 403/404 custom error response: that is
+  distribution-wide, so it would also turn the API's own 403 and 404 answers into a `200` HTML page.
+- cache headers are set by the deploy workflow: `assets/*` (hashed) `public, max-age=31536000, immutable`,
+  `index.html` `no-cache`, other files one hour.
+
+Constraints: CloudFront reaches the ALB over **HTTP** (the ALB has no certificate for its own DNS name), so
+that hop crosses the internet unencrypted, and the ALB stays directly reachable as it is today. Setting
+`acm_certificate_arn` together with `s3_cloudfront` is rejected: the HTTP listener would redirect and the
+origin would fail. Attach a domain and certificate to CloudFront instead if that matters. Trivy flags the
+missing WAF and access logging on the distribution (see `.trivyignore.yaml`).
+
+### Interaction with demo mode
+
+`active = false` still removes the ALB, listeners and all ECS services, the worker autoscaling and the new
+scaling alarms. The bucket and the distribution persist (tests assert the persistent set is identical awake
+and asleep). While asleep the console still loads from the edge, the API origin is `asleep.invalid`, which
+never resolves, so `/v1/*` answers 502. Each wake-up creates a new ALB, so `demo.sh up` also updates the
+distribution's API origin; CloudFront needs a few minutes to deploy that. At rest the bucket and distribution
+cost about $0 (CloudFront has no hourly fee, storage is a few MB, estimate).
+
+### Deploy workflow changes
+
+`deploy.yml` stays one workflow:
+
+- it reads `runtimePlatform.cpuArchitecture` from the `api` task definition and builds with
+  `docker buildx build --platform linux/arm64 --provenance=false --push` (QEMU is set up only then), so the
+  deploy and the task definitions cannot disagree. ARM64 images use the tag `<sha>-arm64`, so re-running a
+  commit after switching architecture never reuses the other architecture's immutable tag;
+- repository variable `CONSOLE_HOSTING` (default `ecs`). With `s3_cloudfront` it builds no web image,
+  registers and rolls only `api` and `worker`, runs `pnpm install --frozen-lockfile && pnpm build`,
+  syncs `web/dist` to the bucket (assets first, `index.html` last) and invalidates `/*`. It needs the
+  repository variable `CLOUDFRONT_DISTRIBUTION_ID` (`terraform output cloudfront_distribution_id`); set
+  `APP_URL` to `terraform output app_url` so the smoke test also checks `/` and `/openapi.json` through
+  CloudFront (the ALB's `/readyz` is always checked directly).
+- `bootstrap` variable `console_hosting = "s3_cloudfront"` adds to the deploy role exactly: `s3:ListBucket` and
+  `s3:GetBucketLocation` on the console bucket, `s3:PutObject` and `s3:DeleteObject` on its objects, and
+  `cloudfront:CreateInvalidation` and `GetInvalidation` on this account's distributions (the ID does not
+  exist yet when bootstrap runs). Nothing changes with the default.
+
+### Cost with the lean options (us-east-1, 730 h, estimates from list prices)
+
+Same assumptions as the default table; ARM64 Fargate at $0.0324 per vCPU-hour and $0.00356 per GB-hour
+(verified, from the AWS Fargate pricing page, 20% below x86). Items marked "est." are not verified.
+
+| Item | Default (x86, web, api 2) | Lean, api x2 | Lean, api x1 |
+| --- | ---: | ---: | ---: |
+| Fargate api (0.25 vCPU, 1 GB) | 21.26 | 17.02 (2 x 8.51) | 8.51 |
+| Fargate worker | 10.63 | 1.00 est. (scale to zero, Spot, about 60 h; Spot rate unverified) | 1.00 |
+| Fargate web | 9.01 | 0 | 0 |
+| Application Load Balancer | 18.40 | 18.40 | 18.40 |
+| RDS db.t4g.micro + 20 GB gp3 | 13.98 | 13.98 | 13.98 |
+| Public IPv4 ($0.005/h each) | 21.90 (6) | 14.60 (4: ALB 2 + api 2) | 10.95 (3) |
+| CloudWatch logs | 2.50 | 2.50 | 2.50 |
+| Container Insights and EMF metrics | 5.00 | 2.00 est. | 2.00 |
+| CloudWatch alarms | 0.90 | 1.20 | 1.20 |
+| Secrets Manager, KMS | 2.20 | 2.20 | 2.20 |
+| ECR, S3, SQS, X-Ray | 1.00 | 1.00 | 1.00 |
+| Console bucket and CloudFront | 0 | 0.50 est. (free tier assumed) | 0.50 |
+| **Total** | **about 107** | **about 74** | **about 62** |
+
+Not included in any column: model API spend, data transfer out beyond the free allowance, CloudFront
+requests beyond its free tier (not verified), and the worker's IPv4 charge beyond the 60 hours assumed.
+Combine with `active = false` for a few dollars a month (see above).
 
 ## Operational notes
 

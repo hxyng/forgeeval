@@ -6,3 +6,12 @@ name_prefix = "forgeeval-prod"
 # acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/..."
 # model_base_url      = "https://api.openai.com/v1"
 # enable_nat_gateway  = true   # tasks move to private subnets (about +$33/month)
+
+# Lean always-on (about $62/month instead of $107; see infra/README.md, "Lean always-on").
+# console_hosting = "s3_cloudfront" also needs console_hosting set the same way in infra/bootstrap.
+# cpu_architecture   = "ARM64"
+# worker_capacity    = "FARGATE_SPOT"
+# worker_min_count   = 0
+# api_desired_count  = 1
+# console_hosting    = "s3_cloudfront"
+# container_insights = false

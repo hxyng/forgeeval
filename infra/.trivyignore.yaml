@@ -19,5 +19,16 @@ misconfigurations:
   - id: AWS-0132
     paths:
       - "modules/data/main.tf"
+      - "modules/console/main.tf"
       - "bootstrap/main.tf"
     statement: "Buckets use SSE-S3 (AES256) with bucket keys. A customer-managed KMS key adds cost and grant plumbing for task roles without a requirement for key-level audit or revocation of eval traces or Terraform state."
+
+  - id: AWS-0011
+    paths:
+      - "modules/console/main.tf"
+    statement: "A WAF web ACL costs about $5 a month plus per-rule and per-request fees, which defeats the lean option's purpose. The distribution serves a public static console and proxies an API that authenticates every request with an API key; it holds no secrets. Attach a web ACL (cloudfront scope, us-east-1) if abuse protection is needed."
+
+  - id: AWS-0079
+    paths:
+      - "modules/data/main.tf"
+    statement: "The optional Aurora Serverless cluster is encrypted at rest with the AWS-managed RDS key (storage_encrypted = true), matching the SSE-S3 decision above: no requirement for key-level audit or revocation that would justify a customer-managed key's cost and grants."

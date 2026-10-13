@@ -26,3 +26,9 @@ variable "web_port" {
   type        = number
   default     = 80
 }
+
+variable "exclude_zone_ids" {
+  description = "Availability zone IDs (for example use1-az3) the VPC must not use. Empty keeps the first two available zones."
+  type        = list(string)
+  default     = []
+}

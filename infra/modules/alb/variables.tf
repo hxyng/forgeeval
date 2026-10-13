@@ -53,3 +53,9 @@ variable "deletion_protection" {
   type        = bool
   default     = false
 }
+
+variable "web_enabled" {
+  description = "Create the web target group and forward unmatched paths to it. False when the console is served from S3 and CloudFront: unmatched paths then get a 404."
+  type        = bool
+  default     = true
+}

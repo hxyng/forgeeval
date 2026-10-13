@@ -260,3 +260,45 @@ variable "ecr_force_delete" {
   type        = bool
   default     = false
 }
+
+# --- cost options ----------------------------------------------------------------------------
+
+variable "cpu_architecture" {
+  description = "CPU architecture of every task definition. ARM64 (Graviton) is about 20% cheaper; the deploy workflow reads this from the task definition and builds matching images."
+  type        = string
+  default     = "X86_64"
+
+  validation {
+    condition     = contains(["X86_64", "ARM64"], var.cpu_architecture)
+    error_message = "cpu_architecture must be \"X86_64\" or \"ARM64\"."
+  }
+}
+
+variable "worker_capacity" {
+  description = "FARGATE or FARGATE_SPOT for the worker service only. Spot tasks can be interrupted with a two-minute warning; SQS redelivers the message."
+  type        = string
+  default     = "FARGATE"
+
+  validation {
+    condition     = contains(["FARGATE", "FARGATE_SPOT"], var.worker_capacity)
+    error_message = "worker_capacity must be \"FARGATE\" or \"FARGATE_SPOT\"."
+  }
+}
+
+variable "worker_idle_minutes" {
+  description = "Minutes with an empty queue (nothing visible or in flight) before step scaling returns the worker to worker_min. Used only when worker_min is 0 or Container Insights is off."
+  type        = number
+  default     = 10
+}
+
+variable "container_insights" {
+  description = "Enable Container Insights on the cluster. Off removes the per-task metrics cost; X-Ray traces and the application's EMF metrics are unaffected. Off also switches worker scaling to step scaling on SQS metrics."
+  type        = bool
+  default     = true
+}
+
+variable "web_enabled" {
+  description = "Create the web (nginx) task definition, service and log group. False when the console is served from S3 and CloudFront."
+  type        = bool
+  default     = true
+}
