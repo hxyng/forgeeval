@@ -22,6 +22,13 @@ curl localhost:8000/readyz
 That starts Postgres (host port **5433**, so it won't clash with a native install), Redis, a one-shot
 migration job, the API on `localhost:8000` (OpenAPI docs at `/docs`) and two worker replicas.
 
+Create a project and an API key (printed once, store it):
+
+```bash
+docker compose exec api python -m forgeeval.admin bootstrap --org acme --project support-bot
+curl -H "Authorization: Bearer fe_..." localhost:8000/v1/whoami
+```
+
 ## Develop the backend
 
 ```bash
