@@ -32,6 +32,22 @@ jobs:
       - run: uv run mypy forgeeval
       - run: uv run pytest -q
 
+  sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy forgeeval_sdk
+      - run: uv run pytest -q
+
   images:
     runs-on: ubuntu-latest
     steps:

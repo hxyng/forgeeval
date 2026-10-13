@@ -50,6 +50,6 @@ Schema changes: edit `forgeeval/db/models.py`, then
 | `backend/forgeeval/worker` | Evaluation workers: queue consumer, evaluators |
 | `backend/forgeeval/db` | SQLAlchemy models and session |
 | `backend/migrations` | Alembic migrations |
-| `sdk/` | Python client SDK: trace capture, redaction, batching (next layer) |
+| `sdk/` | Python client SDK: trace capture, local PII redaction, batching, retries |
 | `web/` | React + TypeScript console (later layer) |
 | `infra/` | Terraform for AWS: ECS, RDS, SQS, S3 (later layer) |
