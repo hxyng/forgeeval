@@ -75,7 +75,7 @@ Actions and writes a Markdown summary (gates, paired deltas with 95% CIs, newly 
 the job summary.
 
 [`.github/workflows/eval-gate.yml`](.github/workflows/eval-gate.yml) is a runnable demo: it starts
-the docker-compose stack, seeds [`examples/triage`](examples/triage) (30 tickets, an accuracy gate
+the docker-compose stack, seeds [`examples/triage`](examples/triage) (120 tickets, an accuracy gate
 and a p95 latency gate), expects `fake/oracle` to pass and `fake/echo` to be blocked.
 
 ## Web console

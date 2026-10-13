@@ -21,6 +21,7 @@ dependencies = [
   "opentelemetry-instrumentation-redis>=0.66b1",
   "opentelemetry-instrumentation-httpx>=0.66b1",
   "boto3>=1.35",
+  "scipy>=1.14",
 ]
 
 [dependency-groups]
@@ -30,6 +31,7 @@ dev = [
   "mypy>=1.13",
   "types-jsonschema>=4.26.0.20261006",
   "boto3-stubs[s3,secretsmanager,sqs]>=1.35",
+  "scipy-stubs>=1.14",
 ]
 
 [build-system]

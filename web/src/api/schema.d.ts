@@ -628,6 +628,13 @@ export interface components {
             evaluator: string;
             /** Higher Is Better */
             higher_is_better: boolean;
+            /**
+             * Method
+             * @description mcnemar-newcombe (binary scores) or paired-t; see forgeeval/stats.py
+             */
+            method?: string | null;
+            /** P Value */
+            p_value: number | null;
             /** Paired N */
             paired_n: number;
             /** Significant */
