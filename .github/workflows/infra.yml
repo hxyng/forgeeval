@@ -85,6 +85,18 @@ jobs:
             --severity HIGH,CRITICAL \
             --exit-code 1 \
             infra
+      - name: trivy config with every optional feature on
+        # Resources behind `count` (CloudFront console, Aurora, Spot, step scaling) are only
+        # evaluated when enabled, so scan a second time with all of them switched on.
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w "$TRIVY_IMAGE" config \
+            --skip-version-check \
+            --skip-dirs '**/.terraform' \
+            --ignorefile infra/.trivyignore.yaml \
+            --tf-vars infra/envs/prod/security-scan.tfvars \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            infra
 
   plan:
     name: plan (needs AWS_PLAN_ROLE_ARN)
