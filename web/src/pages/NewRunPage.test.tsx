@@ -113,6 +113,7 @@ describe("NewRunPage", () => {
       baseline_run_id: null,
       max_failure_ratio: 0.1,
       trigger: "manual",
+      early_stop: false,
     });
   });
 

@@ -98,6 +98,9 @@ export function makeRun(over: Partial<Schemas["RunOut"]> = {}): Schemas["RunOut"
     created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
     started_at: new Date(Date.now() - 5 * 60_000).toISOString(),
     finished_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+    early_stop: false,
+    stopped_early_at: null,
+    early_stop_reason: null,
     ...over,
   };
 }

@@ -284,6 +284,15 @@ def test_flags_override_github_defaults(template: Path) -> None:
     assert run_body["max_failure_ratio"] == 0.1
 
 
+def test_early_stop_flag_is_sent_only_when_given(template: Path) -> None:
+    server = Server([check("a", "pass")], "pass")
+    run_cli(server, template)
+    assert "early_stop" not in server.bodies["POST /v1/runs"]
+    server = Server([check("a", "pass")], "pass")
+    run_cli(server, template, "--early-stop")
+    assert server.bodies["POST /v1/runs"]["early_stop"] is True
+
+
 def test_non_pr_ref_has_no_pr_number(template: Path) -> None:
     server = Server([check("a", "pass")], "pass")
     run_cli(server, template, env={"GITHUB_REF": "refs/heads/main"})

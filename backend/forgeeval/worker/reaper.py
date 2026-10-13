@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from forgeeval.config import get_settings
 from forgeeval.db.models import EvalRun, ItemStatus, RunItem, RunStatus
+from forgeeval.early_stop import check_early_stops
 from forgeeval.queue import JobQueue
 from forgeeval.worker.processor import dead_letter, finalize_run, retry_delay
 
@@ -31,6 +32,7 @@ class ReapResult:
     dead_lettered: int = 0
     requeued: int = 0
     skipped_locked: bool = False
+    stopped_early: int = 0
 
 
 def _expire_leases(db: Session, result: ReapResult) -> set[uuid.UUID]:
@@ -107,6 +109,7 @@ def reap(db: Session, queue: JobQueue) -> ReapResult:
         for run_id in _expire_leases(db, result):
             finalize_run(db, run_id)
         _requeue(db, queue, result)
+        result.stopped_early = len(check_early_stops(db))
     finally:
         db.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": REAPER_LOCK_KEY})
         db.commit()

@@ -71,6 +71,19 @@ describe("RunDetailPage", () => {
     expect(screen.queryByRole("button", { name: /cancel run/i })).not.toBeInTheDocument();
   });
 
+  it("explains when a run stopped early", async () => {
+    const run = makeRun({
+      early_stop: true,
+      stopped_early_at: new Date().toISOString(),
+      early_stop_reason: "gate 'accuracy' failed after 23 items.",
+    });
+    mockApi({ [`/v1/runs/${run.id}`]: run, [`/v1/runs/${run.id}/metrics`]: METRICS });
+    renderDetail(run.id);
+    const note = (await screen.findByText("Stopped early.")).closest("p");
+    expect(note).toHaveTextContent("gate 'accuracy' failed after 23 items.");
+    expect(note).toHaveTextContent("remaining items were skipped");
+  });
+
   it("offers cancel for an active run and posts to the cancel endpoint", async () => {
     const run = makeRun({
       status: "running",

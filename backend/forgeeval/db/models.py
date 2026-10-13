@@ -1,4 +1,5 @@
-"""PostgreSQL schema v1. Mirrors the ERD in docs/data-model (21 tables, 5 domains)."""
+"""PostgreSQL schema. Mirrors the ERD in docs/data-model (21 tables, 5 domains), plus the
+model_call_cache table added with response caching."""
 
 import enum
 import uuid
@@ -314,6 +315,9 @@ class EvalRun(CreatedAt, Base):
     failed_items: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     cost_usd: Mapped[Decimal] = mapped_column(Money, server_default="0")
     use_cache: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    early_stop: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    stopped_early_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    early_stop_reason: Mapped[str | None] = mapped_column(Text)
     git_sha: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = fk("users.id", nullable=True, ondelete="SET NULL")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -351,6 +355,9 @@ class RunItem(CreatedAt, Base):
     dataset_item_id: Mapped[uuid.UUID] = fk("dataset_items.id")
     status: Mapped[ItemStatus] = mapped_column(
         pg_enum(ItemStatus), server_default=ItemStatus.queued.value
+    )
+    position: Mapped[int | None] = mapped_column(
+        Integer, comment="Random processing order; early stopping reads the finished prefix"
     )
     attempt: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

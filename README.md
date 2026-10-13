@@ -31,6 +31,14 @@ docker compose exec api python -m forgeeval.admin bootstrap --org acme --project
 curl -H "Authorization: Bearer fe_..." localhost:8000/v1/whoami
 ```
 
+## Early stopping
+
+`forgeeval gate --early-stop` (or `"early_stop": true` on `POST /v1/runs`) stops a run as soon as
+its gates are decided, using an anytime-valid confidence sequence, and skips the remaining items.
+Clear regressions stop after a fraction of the dataset; close calls run to the end and use the
+normal test. Baselines never include runs that failed a gate. Details:
+[ADR 0004](docs/adr/0004-early-stopping.md).
+
 ## Queue and object storage
 
 Locally the job queue is Redis Streams; in AWS it is SQS with a dead-letter queue. To run the
