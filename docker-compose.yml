@@ -45,6 +45,12 @@ services:
       redis: { condition: service_healthy }
       otel-collector: { condition: service_started }
 
+  web:
+    build: ./web
+    ports: ["3000:80"]  # console: http://localhost:3000 (proxies /v1 to the api)
+    depends_on:
+      api: { condition: service_started }
+
   worker:
     build: ./backend
     command: ["python", "-m", "forgeeval.worker.main"]
