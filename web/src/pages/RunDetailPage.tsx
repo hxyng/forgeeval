@@ -143,6 +143,12 @@ export function RunDetailPage() {
           {prog.succeeded} succeeded · {prog.failed} dead-lettered · {prog.cancelled} cancelled ·{" "}
           {prog.inFlight} pending
         </p>
+        {r.stopped_early_at && (
+          <p className="state" role="status">
+            <strong>Stopped early.</strong> {r.early_stop_reason} The remaining items were skipped
+            to save model calls.
+          </p>
+        )}
         {prog.failed > 0 && (
           <p>
             <Link to={`/runs/${r.id}/items?status=dead_lettered`}>

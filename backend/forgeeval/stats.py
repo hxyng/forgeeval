@@ -140,3 +140,53 @@ def min_items_for_quantile(q: float, confidence: float = 0.95) -> int:
     q-quantile: P(all n samples fall below the q-quantile) = q^n <= 1 - confidence.
     For p95 at 95% that is 59 items; below it a p95 is effectively the noisiest single value."""
     return math.ceil(math.log(1 - confidence) / math.log(q))
+
+
+# ---------- anytime-valid confidence sequences (early stopping) ----------
+
+
+@dataclass(frozen=True)
+class SequentialInterval:
+    n: int
+    mean: float
+    low: float
+    high: float
+    alpha: float
+
+
+def confidence_sequence(diffs: Sequence[float], alpha: float) -> SequentialInterval | None:
+    """Anytime-valid confidence sequence for the mean of paired differences in [-1, 1].
+
+    Predictable plug-in empirical-Bernstein CS of Waudby-Smith & Ramdas (2023, "Estimating means
+    of bounded random variables by betting"): valid simultaneously at every n, so a run may be
+    checked after each item and stopped as soon as the interval is decisive without inflating the
+    error rate. Unlike Hoeffding-style bounds it tightens when the differences have low variance
+    (most items unchanged), which is the usual case for prompt changes.
+
+    Differences are mapped to [0, 1] with x = (d + 1) / 2 and the interval is mapped back.
+    """
+    if not diffs:
+        return None
+    xs = [(d + 1) / 2 for d in diffs]
+    if any(x < 0 or x > 1 for x in xs):
+        raise ValueError("confidence_sequence needs differences in [-1, 1]")
+    log_term = math.log(2 / alpha)
+    cap = 0.5
+    sum_lam = sum_lam_x = sum_v_psi = 0.0
+    sum_sq = 0.25  # prior pseudo-observation for the variance estimate
+    sum_x = 0.5  # prior pseudo-observation for the mean estimate
+    for i, x in enumerate(xs, start=1):
+        mean_prev = sum_x / i  # predictable: uses observations before i
+        var_prev = sum_sq / i
+        lam = min(math.sqrt(2 * log_term / (var_prev * i * math.log(i + 1))), cap)
+        psi = (-math.log(1 - lam) - lam) / 4
+        sum_v_psi += 4 * (x - mean_prev) ** 2 * psi
+        sum_lam += lam
+        sum_lam_x += lam * x
+        sum_x += x
+        sum_sq += (x - sum_x / (i + 1)) ** 2
+    centre = sum_lam_x / sum_lam
+    half = (log_term + sum_v_psi) / sum_lam
+    low, high = max(0.0, centre - half), min(1.0, centre + half)
+    mean = sum(diffs) / len(diffs)
+    return SequentialInterval(len(diffs), mean, 2 * low - 1, 2 * high - 1, alpha)

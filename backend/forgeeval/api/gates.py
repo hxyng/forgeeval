@@ -20,7 +20,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel, Field
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,7 +32,7 @@ from forgeeval.api.compare import (
     run_metrics,
 )
 from forgeeval.api.registry import NAME_PATTERN
-from forgeeval.api.runs import VersionRef, resolve_evaluator_version
+from forgeeval.api.runs import VersionRef, latest_good_run, resolve_evaluator_version
 from forgeeval.auth import AuthContext, Scope, require
 from forgeeval.db.models import (
     EvalRun,
@@ -220,7 +220,7 @@ def decide(
     use_interval = gate.aggregate is GateAggregate.mean or (
         gate.aggregate is GateAggregate.pass_rate
         and interval is not None
-        and interval.method == "mcnemar-newcombe"
+        and interval.method in ("mcnemar-newcombe", "confidence-sequence")
     )
     if not use_interval:
         # Medians and non-binary pass rates: point estimate (no paired interval available).
@@ -323,29 +323,47 @@ def _check_out(check: GateCheck, gate: RegressionGate) -> CheckOut:
 
 
 def find_baseline(db: Session, run: EvalRun, evaluator_version_id: uuid.UUID) -> EvalRun | None:
-    """Latest usable earlier run of the same prompt over the same dataset version that also
-    used this evaluator version."""
+    """Latest earlier run of the same prompt over the same dataset version that used this
+    evaluator version and never failed a gate (see runs.latest_good_run)."""
     prompt_name = db.scalar(
         select(PromptVersion.name).where(PromptVersion.id == run.prompt_version_id)
     )
-    return db.scalar(
-        select(EvalRun)
-        .join(PromptVersion, PromptVersion.id == EvalRun.prompt_version_id)
-        .where(
-            EvalRun.project_id == run.project_id,
-            EvalRun.dataset_version_id == run.dataset_version_id,
-            EvalRun.id != run.id,
-            EvalRun.id < run.id,  # UUIDv7: earlier
-            EvalRun.status.in_(USABLE),
-            PromptVersion.name == prompt_name,
-            exists().where(
-                RunEvaluator.run_id == EvalRun.id,
-                RunEvaluator.evaluator_version_id == evaluator_version_id,
-            ),
-        )
-        .order_by(EvalRun.id.desc())
-        .limit(1)
+    if prompt_name is None:
+        return None
+    return latest_good_run(
+        db,
+        run.project_id,
+        run.dataset_version_id,
+        prompt_name,
+        before=run.id,
+        evaluator_version_id=evaluator_version_id,
     )
+
+
+def _gate_interval(
+    db: Session,
+    run: EvalRun,
+    baseline_run: EvalRun,
+    gate: RegressionGate,
+    confidence: float,
+) -> PairedDelta | None:
+    """Fixed-n interval, except for early-stop runs: if the run stopped early, the decision was
+    taken with the anytime-valid sequence (a fixed-n interval would be invalid after peeking);
+    if it ran to completion, the fixed-n interval gets the remaining error budget."""
+    if not run.early_stop:
+        return paired_stats(db, run, baseline_run, gate.evaluator_version_id, confidence)
+    from forgeeval.early_stop import (
+        ALPHA_FIXED,
+        ALPHA_SEQUENTIAL,
+        prefix_diffs,
+        sequential_interval,
+    )
+
+    m = max(1, round(0.05 / (1 - confidence)))  # gates sharing this check (Bonferroni)
+    if run.stopped_early_at is not None:
+        diffs = prefix_diffs(db, run, baseline_run.id, gate.evaluator_version_id)
+        return sequential_interval(diffs, ALPHA_SEQUENTIAL / m) if diffs else None
+    return paired_stats(db, run, baseline_run, gate.evaluator_version_id, 1 - ALPHA_FIXED / m)
 
 
 def evaluate_gate(
@@ -387,9 +405,7 @@ def evaluate_gate(
                     ),
                     None,
                 )
-                interval = paired_stats(
-                    db, run, baseline_run, gate.evaluator_version_id, confidence
-                )
+                interval = _gate_interval(db, run, baseline_run, gate, confidence)
         result = decide(gate, hib, cand.get(gate.evaluator_version_id), base_m, interval)
 
     check = GateCheck(

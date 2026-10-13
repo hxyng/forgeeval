@@ -99,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     gate.add_argument("--pr", type=int)
     gate.add_argument("--summary-file", type=Path)
     gate.add_argument("--fail-on-inconclusive", action="store_true")
+    gate.add_argument(
+        "--early-stop",
+        action="store_true",
+        help="stop the run as soon as the gates are decided (needs a finished baseline run)",
+    )
     gate.add_argument("--api-key", help="default: $FORGEEVAL_API_KEY")
     gate.add_argument("--base-url", help=f"default: $FORGEEVAL_BASE_URL or {DEFAULT_BASE_URL}")
     return parser
@@ -308,6 +313,8 @@ def run_gate(
             run_body["baseline_run_id"] = args.baseline_run
         if args.max_failure_ratio is not None:
             run_body["max_failure_ratio"] = args.max_failure_ratio
+        if args.early_stop:
+            run_body["early_stop"] = True
         _, created = api.call("POST", "/v1/runs", "Creating run", json_body=run_body)
         run_id = created["id"]
         print(f"run {run_id} created")

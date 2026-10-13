@@ -350,3 +350,29 @@ def test_worker_drains_a_run_through_real_redis(
             break
     assert run_row(db, run_id).status is RunStatus.succeeded
     assert redis_queue.depth() == 0
+
+
+def test_reaper_never_leaks_its_lock(
+    client: TestClient, db: Session, queue: RecordingQueue, migrated_engine: Engine
+) -> None:
+    # reap() commits several times; the lock must still be released on the connection that took
+    # it, so no advisory lock remains and another session can reap straight after.
+    run_id = start_run(client)
+    item = items(db, run_id)[0]
+    claim(db, item.id, "dead-worker")
+    expire_lease(db, item.id)
+    # A busy worker's pool holds several idle connections, so a checkout after a commit can return
+    # a different connection than the one that took the lock. Recreate that.
+    warm = [migrated_engine.connect() for _ in range(3)]
+    for c in warm:
+        c.close()
+    for _ in range(3):
+        assert not reap(db, queue).skipped_locked
+    with migrated_engine.connect() as conn:
+        held = conn.scalar(
+            text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = :k"),
+            {"k": REAPER_LOCK_KEY},
+        )
+        assert held == 0
+        with Session(conn) as other:
+            assert not reap(other, queue).skipped_locked

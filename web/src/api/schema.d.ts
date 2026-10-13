@@ -1020,6 +1020,12 @@ export interface components {
              */
             baseline_run_id?: string | null;
             dataset: components["schemas"]["VersionRef"];
+            /**
+             * Early Stop
+             * @description Stop as soon as the project's gates are decided (anytime-valid). Needs a baseline: the given one, else the latest usable run of the same prompt over the same dataset version.
+             * @default false
+             */
+            early_stop: boolean;
             /** Evaluators */
             evaluators: components["schemas"]["VersionRef"][];
             /** Git Sha */
@@ -1118,6 +1124,10 @@ export interface components {
             dataset: string;
             /** Dataset Version */
             dataset_version: number;
+            /** Early Stop */
+            early_stop: boolean;
+            /** Early Stop Reason */
+            early_stop_reason: string | null;
             /** Evaluators */
             evaluators: components["schemas"]["RunEvaluatorOut"][];
             /** Finished At */
@@ -1137,6 +1147,8 @@ export interface components {
             /** Started At */
             started_at: string | null;
             status: components["schemas"]["RunStatus"];
+            /** Stopped Early At */
+            stopped_early_at: string | null;
             /** Total Items */
             total_items: number;
             trigger: components["schemas"]["RunTrigger"];

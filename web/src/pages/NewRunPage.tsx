@@ -34,6 +34,7 @@ export function NewRunPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [baseline, setBaseline] = useState("");
   const [ratio, setRatio] = useState("0.02");
+  const [earlyStop, setEarlyStop] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const dsVersions = useDatasetVersions(dataset);
@@ -75,6 +76,7 @@ export function NewRunPage() {
       max_failure_ratio: r,
       trigger: "manual",
       use_cache: true,
+      early_stop: earlyStop,
     };
     create.mutate(body, { onSuccess: (run) => navigate(`/runs/${run.id}`) });
   }
@@ -216,6 +218,14 @@ export function NewRunPage() {
                 value={ratio}
                 onChange={(e) => setRatio(e.target.value)}
               />
+            </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={earlyStop}
+                onChange={(e) => setEarlyStop(e.target.checked)}
+              />
+              <span>Stop early once the gates are decided (needs a finished baseline)</span>
             </label>
           </div>
 

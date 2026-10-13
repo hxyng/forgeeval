@@ -1479,6 +1479,12 @@
           "dataset": {
             "$ref": "#/components/schemas/VersionRef"
           },
+          "early_stop": {
+            "default": false,
+            "description": "Stop as soon as the project's gates are decided (anytime-valid). Needs a baseline: the given one, else the latest usable run of the same prompt over the same dataset version.",
+            "title": "Early Stop",
+            "type": "boolean"
+          },
           "evaluators": {
             "items": {
               "$ref": "#/components/schemas/VersionRef"
@@ -1739,6 +1745,21 @@
             "title": "Dataset Version",
             "type": "integer"
           },
+          "early_stop": {
+            "title": "Early Stop",
+            "type": "boolean"
+          },
+          "early_stop_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Stop Reason"
+          },
           "evaluators": {
             "items": {
               "$ref": "#/components/schemas/RunEvaluatorOut"
@@ -1800,6 +1821,18 @@
           "status": {
             "$ref": "#/components/schemas/RunStatus"
           },
+          "stopped_early_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped Early At"
+          },
           "total_items": {
             "title": "Total Items",
             "type": "integer"
@@ -1830,7 +1863,10 @@
           "git_sha",
           "created_at",
           "started_at",
-          "finished_at"
+          "finished_at",
+          "early_stop",
+          "stopped_early_at",
+          "early_stop_reason"
         ],
         "title": "RunOut",
         "type": "object"

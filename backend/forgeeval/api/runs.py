@@ -7,6 +7,7 @@ receive an id that isn't in the database yet. If enqueueing fails after commit, 
 """
 
 import logging
+import random
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -14,7 +15,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import exists, func, insert, select, update
 from sqlalchemy.orm import Session
 
 from forgeeval.auth import AuthContext, Scope, require
@@ -26,6 +27,8 @@ from forgeeval.db.models import (
     EvalRun,
     Evaluator,
     EvaluatorVersion,
+    GateCheck,
+    GateVerdict,
     ItemStatus,
     PromptVersion,
     RunEvaluator,
@@ -66,6 +69,12 @@ class RunIn(BaseModel):
         description="Reuse cached generations and judge verdicts for unchanged inputs. "
         "Set false to force fresh model calls (reads and writes).",
     )
+    early_stop: bool = Field(
+        False,
+        description="Stop as soon as the project's gates are decided (anytime-valid). Needs a "
+        "baseline: the given one, else the latest usable run of the same prompt over the same "
+        "dataset version.",
+    )
 
 
 class RunEvaluatorOut(BaseModel):
@@ -102,6 +111,9 @@ class RunOut(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    early_stop: bool
+    stopped_early_at: datetime | None
+    early_stop_reason: str | None
 
 
 class RunPage(BaseModel):
@@ -152,6 +164,43 @@ def resolve_evaluator_version(
     return ev
 
 
+def latest_good_run(
+    db: Session,
+    project_id: uuid.UUID,
+    dataset_version_id: uuid.UUID,
+    prompt_name: str,
+    *,
+    before: uuid.UUID | None = None,
+    evaluator_version_id: uuid.UUID | None = None,
+) -> EvalRun | None:
+    """The automatic baseline: the latest usable run of this prompt over this dataset version
+    that never failed a gate check. Without the gate condition, a regression run would become
+    the baseline for the next run and hide every later regression."""
+    q = (
+        select(EvalRun)
+        .join(PromptVersion, PromptVersion.id == EvalRun.prompt_version_id)
+        .where(
+            EvalRun.project_id == project_id,
+            EvalRun.dataset_version_id == dataset_version_id,
+            EvalRun.status.in_([RunStatus.succeeded, RunStatus.partial]),
+            PromptVersion.name == prompt_name,
+            ~exists().where(
+                GateCheck.run_id == EvalRun.id, GateCheck.verdict == GateVerdict.failed
+            ),
+        )
+    )
+    if before is not None:
+        q = q.where(EvalRun.id < before)  # UUIDv7: earlier
+    if evaluator_version_id is not None:
+        q = q.where(
+            exists().where(
+                RunEvaluator.run_id == EvalRun.id,
+                RunEvaluator.evaluator_version_id == evaluator_version_id,
+            )
+        )
+    return db.scalar(q.order_by(EvalRun.id.desc()).limit(1))
+
+
 def _run_out(db: Session, run: EvalRun) -> RunOut:
     dataset, dv = db.execute(
         select(Dataset.name, DatasetVersion.version)
@@ -200,6 +249,9 @@ def _run_out(db: Session, run: EvalRun) -> RunOut:
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
+        early_stop=run.early_stop,
+        stopped_early_at=run.stopped_early_at,
+        early_stop_reason=run.early_stop_reason,
     )
 
 
@@ -239,6 +291,15 @@ def create_run(
             raise _unprocessable(
                 "Baseline run used a different dataset version; results would not be comparable."
             )
+    baseline_run_id = body.baseline_run_id
+    if body.early_stop and baseline_run_id is None:
+        good = latest_good_run(db, ctx.project_id, dv.id, pv.name)
+        baseline_run_id = good.id if good else None
+        if baseline_run_id is None:
+            raise _unprocessable(
+                "early_stop needs a baseline: no finished run of this prompt over this dataset "
+                "version exists yet. Run once without early_stop first."
+            )
 
     # Freeze first: from here on the items this run reads can never change underneath it.
     db.execute(
@@ -251,8 +312,9 @@ def create_run(
         project_id=ctx.project_id,
         dataset_version_id=dv.id,
         prompt_version_id=pv.id,
-        baseline_run_id=body.baseline_run_id,
+        baseline_run_id=baseline_run_id,
         trigger=body.trigger,
+        early_stop=body.early_stop,
         max_failure_ratio=body.max_failure_ratio,
         total_items=dv.item_count,
         git_sha=body.git_sha,
@@ -267,13 +329,18 @@ def create_run(
         .where(DatasetItem.dataset_version_id == dv.id)
         .order_by(DatasetItem.id)
     ).all()
+    # A random but fixed processing order: early stopping reads the finished prefix in this
+    # order, so it can't be biased by which items happen to finish first.
+    positions = list(range(len(item_ids)))
+    random.SystemRandom().shuffle(positions)
     db.execute(
         insert(RunItem),
         [
-            {"id": rid, "run_id": run.id, "dataset_item_id": did}
-            for rid, did in zip(item_ids, dataset_items, strict=True)
+            {"id": rid, "run_id": run.id, "dataset_item_id": did, "position": pos}
+            for rid, did, pos in zip(item_ids, dataset_items, positions, strict=True)
         ],
     )
+    item_ids = [rid for _pos, rid in sorted(zip(positions, item_ids, strict=True))]
     db.commit()
     record(runs_created.add, 1, {"trigger": body.trigger.value})
 

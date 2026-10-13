@@ -285,3 +285,19 @@ def test_unchanged_metric_reads_as_zero_not_negative_zero() -> None:
     v = decide(drop_p50, True, m, m, None)
     assert v.verdict is GateVerdict.passed
     assert "worsened by 0," in v.reason and "-0" not in v.reason
+
+
+def test_a_run_that_failed_its_gate_never_becomes_the_baseline(
+    client: TestClient, db: Session
+) -> None:
+    make_gate(client, "accuracy", "label", **ACCURACY)
+    good = completed_run(client, db, {})
+    bad1 = completed_run(client, db, {"wrong_first": 8})
+    first = client.post("/v1/gates/accuracy/check", json={"run_id": bad1}).json()
+    assert first["verdict"] == "fail" and first["baseline_run_id"] == good
+
+    # The same regression again must still be compared with the good run, not with bad1.
+    bad2 = completed_run(client, db, {"wrong_first": 8})
+    second = client.post("/v1/gates/accuracy/check", json={"run_id": bad2}).json()
+    assert second["baseline_run_id"] == good
+    assert second["verdict"] == "fail"

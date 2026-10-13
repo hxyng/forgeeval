@@ -12,10 +12,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, select, text, update
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from forgeeval.config import get_settings
 from forgeeval.db.models import EvalRun, ItemStatus, RunItem, RunStatus
+from forgeeval.early_stop import check_early_stops
 from forgeeval.queue import JobQueue
 from forgeeval.worker.processor import dead_letter, finalize_run, retry_delay
 
@@ -31,6 +33,7 @@ class ReapResult:
     dead_lettered: int = 0
     requeued: int = 0
     skipped_locked: bool = False
+    stopped_early: int = 0
 
 
 def _expire_leases(db: Session, result: ReapResult) -> set[uuid.UUID]:
@@ -99,17 +102,26 @@ def _requeue(db: Session, queue: JobQueue, result: ReapResult) -> None:
 
 def reap(db: Session, queue: JobQueue) -> ReapResult:
     result = ReapResult()
-    got_lock = db.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": REAPER_LOCK_KEY})
-    if not got_lock:
-        result.skipped_locked = True
-        return result
-    try:
-        for run_id in _expire_leases(db, result):
-            finalize_run(db, run_id)
-        _requeue(db, queue, result)
-    finally:
-        db.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": REAPER_LOCK_KEY})
-        db.commit()
+    # The advisory lock is session-level in Postgres, i.e. owned by one *connection*. `db` hands its
+    # connection back to the pool at every commit, so taking and releasing the lock through `db`
+    # could unlock on a different connection and leak the lock, after which no other worker could
+    # ever reap. Hold it on a dedicated connection for the whole pass instead.
+    bind = db.get_bind()
+    engine = bind if isinstance(bind, Engine) else bind.engine
+    with engine.connect() as lock_conn:
+        got_lock = lock_conn.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": REAPER_LOCK_KEY})
+        lock_conn.commit()
+        if not got_lock:
+            result.skipped_locked = True
+            return result
+        try:
+            for run_id in _expire_leases(db, result):
+                finalize_run(db, run_id)
+            _requeue(db, queue, result)
+            result.stopped_early = len(check_early_stops(db))
+        finally:
+            lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": REAPER_LOCK_KEY})
+            lock_conn.commit()
     if result.expired or result.requeued:
         log.info(
             "reaper: %d leases expired (%d dead-lettered), %d items requeued",
