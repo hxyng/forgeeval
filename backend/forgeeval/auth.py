@@ -30,6 +30,7 @@ LAST_USED_RESOLUTION = timedelta(minutes=1)
 class Scope(enum.StrEnum):
     traces_write = "traces:write"
     runs_write = "runs:write"
+    registry_write = "registry:write"
     gates_read = "gates:read"
     project_read = "project:read"
 
