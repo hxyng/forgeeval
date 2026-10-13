@@ -1,8 +1,24 @@
 data "aws_caller_identity" "current" {}
 
 # ---------------------------------------------------------------------------------------------
-# PostgreSQL 16 on RDS
+# PostgreSQL 16: RDS instance (default) or Aurora Serverless v2 (var.database_engine)
 # ---------------------------------------------------------------------------------------------
+
+locals {
+  rds    = var.database_engine == "rds"
+  aurora = var.database_engine == "aurora-serverless"
+}
+
+# The RDS resources gained a count (engine switch); these keep existing state addresses stable.
+moved {
+  from = aws_db_parameter_group.this
+  to   = aws_db_parameter_group.this[0]
+}
+
+moved {
+  from = aws_db_instance.this
+  to   = aws_db_instance.this[0]
+}
 
 resource "aws_db_subnet_group" "this" {
   name       = "${var.name_prefix}-db"
@@ -10,6 +26,8 @@ resource "aws_db_subnet_group" "this" {
 }
 
 resource "aws_db_parameter_group" "this" {
+  count = local.rds ? 1 : 0
+
   name_prefix = "${var.name_prefix}-pg16-"
   family      = "postgres16"
   description = "ForgeEval PostgreSQL 16: TLS required"
@@ -24,6 +42,8 @@ resource "aws_db_parameter_group" "this" {
 }
 
 resource "aws_db_instance" "this" {
+  count = local.rds ? 1 : 0
+
   identifier     = "${var.name_prefix}-db"
   engine         = "postgres"
   engine_version = var.db_engine_version
@@ -41,7 +61,7 @@ resource "aws_db_instance" "this" {
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [var.rds_security_group_id]
-  parameter_group_name   = aws_db_parameter_group.this.name
+  parameter_group_name   = aws_db_parameter_group.this[0].name
   publicly_accessible    = false
   multi_az               = var.multi_az
 
@@ -60,6 +80,83 @@ resource "aws_db_instance" "this" {
 
   lifecycle {
     # RDS applies minor upgrades itself; do not fight it.
+    ignore_changes = [engine_version]
+  }
+}
+
+# Aurora PostgreSQL Serverless v2 that scales to 0 ACU and pauses when idle (demo mode). Only the
+# instance-hours stop: storage and backups still bill while paused. Auto-pause needs engine 16.3+.
+resource "aws_rds_cluster_parameter_group" "aurora" {
+  count = local.aurora ? 1 : 0
+
+  name_prefix = "${var.name_prefix}-aurora-pg16-"
+  family      = "aurora-postgresql16"
+  description = "ForgeEval Aurora PostgreSQL 16: TLS required"
+
+  parameter {
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "immediate"
+  }
+
+  lifecycle { create_before_destroy = true }
+}
+
+resource "aws_rds_cluster" "aurora" {
+  count = local.aurora ? 1 : 0
+
+  cluster_identifier = "${var.name_prefix}-db"
+  engine             = "aurora-postgresql"
+  engine_mode        = "provisioned" # Serverless v2 runs in provisioned mode with db.serverless instances
+  engine_version     = var.aurora_engine_version
+
+  database_name   = var.db_name
+  master_username = var.db_username
+  # Aurora creates and rotates the master password in Secrets Manager; it never enters Terraform state.
+  manage_master_user_password = true
+
+  storage_encrypted               = true
+  db_subnet_group_name            = aws_db_subnet_group.this.name
+  vpc_security_group_ids          = [var.rds_security_group_id]
+  db_cluster_parameter_group_name = aws_rds_cluster_parameter_group.aurora[0].name
+
+  backup_retention_period = var.backup_retention_days
+  preferred_backup_window = "03:00-04:00"
+  copy_tags_to_snapshot   = true
+
+  iam_database_authentication_enabled = true
+  enabled_cloudwatch_logs_exports     = ["postgresql"]
+
+  deletion_protection       = var.deletion_protection
+  skip_final_snapshot       = var.skip_final_snapshot
+  final_snapshot_identifier = var.skip_final_snapshot ? null : "${var.name_prefix}-db-final"
+
+  serverlessv2_scaling_configuration {
+    min_capacity             = 0
+    max_capacity             = var.aurora_max_acu
+    seconds_until_auto_pause = var.aurora_auto_pause_seconds
+  }
+
+  lifecycle {
+    # Aurora applies minor upgrades itself; do not fight it.
+    ignore_changes = [engine_version]
+  }
+}
+
+resource "aws_rds_cluster_instance" "aurora" {
+  count = local.aurora ? 1 : 0
+
+  identifier                 = "${var.name_prefix}-db-1"
+  cluster_identifier         = aws_rds_cluster.aurora[0].id
+  engine                     = aws_rds_cluster.aurora[0].engine
+  engine_version             = aws_rds_cluster.aurora[0].engine_version
+  instance_class             = "db.serverless"
+  db_subnet_group_name       = aws_db_subnet_group.this.name
+  publicly_accessible        = false
+  auto_minor_version_upgrade = true
+  copy_tags_to_snapshot      = true
+
+  lifecycle {
     ignore_changes = [engine_version]
   }
 }

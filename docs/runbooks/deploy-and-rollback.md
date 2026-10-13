@@ -100,6 +100,40 @@ Or re-run the `deploy` workflow on the previous commit from the Actions tab (cho
 reuses that commit's existing images and registers fresh revisions. Rolling back the application does not
 roll back the database; see the next section.
 
+## Wake for a demo / put to sleep
+
+Demo mode (`active`, see `infra/README.md`, "Demo mode") removes the load balancer and the ECS services
+when nobody is using the environment. The database, queue, bucket, secrets, task definitions and ECR
+images stay, so nothing needs redeploying.
+
+**Wake** (about 5 to 10 minutes):
+
+1. With admin credentials run `infra/scripts/demo.sh up` (add `-var-file=<absolute path>` if you use
+   one). It applies `active = true`, waits for api, worker and web to be stable and curls `/readyz`
+   through the new load balancer. Note the printed URL: the ALB DNS name is new every time, so any
+   `APP_URL` variable or DNS record must be re-pointed (a CNAME to `alb_dns_name` once a domain exists).
+2. The services start from the latest deployed task-definition revision, so the running version is
+   whatever the last deploy rolled out. If `main` has moved on, run the `deploy` workflow now.
+3. With Aurora, the first request after a pause waits about 15 seconds for the database to resume (30
+   seconds or more if it was paused for over a day). `/readyz` is unhealthy until then. The services have
+   a 180 s (api) and 120 s (web) health check grace period so ECS keeps their tasks, and `demo.sh up`
+   retries `/readyz` for about 2 minutes. If it still fails, check the api log group for connection errors.
+4. `infra/scripts/demo.sh status` shows the state and the estimated cost per hour.
+
+**Sleep** (about 3 to 5 minutes):
+
+1. Let running evaluations finish. Otherwise in-flight worker jobs are stopped: the queue is kept and the
+   message becomes visible again after its visibility timeout (120 s), so the job runs on the next wake.
+   Check the queue first with `aws sqs get-queue-attributes` if it matters.
+2. `infra/scripts/demo.sh down` (same extra arguments as `up`). The load balancer and services are
+   removed; the database, queues and secrets stay.
+3. With Aurora, the database pauses by itself 5 minutes after the last connection closes. Do not leave a
+   psql session open, and do not put an RDS Proxy in front: either keeps it awake.
+4. `infra/scripts/demo.sh status` should report ASLEEP.
+
+While asleep, `deploy.yml` skips with a notice instead of failing (wake first, then deploy), the alarms
+on the load balancer do not exist, and the queue and database alarms still do.
+
 ## Failed migration
 
 The deploy stops after the migration step and no service has changed, so the running version keeps

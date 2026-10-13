@@ -1,8 +1,10 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  account_id = data.aws_caller_identity.current.account_id
-  actions    = [aws_sns_topic.alarms.arn]
+  alb_enabled    = var.alb_enabled
+  aurora_enabled = var.db_engine == "aurora-serverless"
+  account_id     = data.aws_caller_identity.current.account_id
+  actions        = [aws_sns_topic.alarms.arn]
 }
 
 # CloudWatch cannot publish to a topic encrypted with the AWS-managed SNS key, so the topic gets
@@ -94,6 +96,8 @@ resource "aws_cloudwatch_metric_alarm" "queue_oldest_message" {
 # ---------------------------------------------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx_rate" {
+  count = local.alb_enabled ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-alb-5xx-rate"
   alarm_description   = "More than ${var.alb_5xx_rate_threshold_percent}% of requests through the load balancer returned 5xx."
   comparison_operator = "GreaterThanThreshold"
@@ -149,6 +153,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_rate" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "api_unhealthy_targets" {
+  count = local.alb_enabled ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-api-unhealthy-targets"
   alarm_description   = "At least one API task is failing its /readyz health check."
   namespace           = "AWS/ApplicationELB"
@@ -165,7 +171,8 @@ resource "aws_cloudwatch_metric_alarm" "api_unhealthy_targets" {
 }
 
 # ---------------------------------------------------------------------------------------------
-# Database
+# Database. With the load balancer gone (demo mode asleep) the two alarms above do not exist; the
+# queue and database alarms always do.
 # ---------------------------------------------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
@@ -185,6 +192,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
+  count = local.aurora_enabled ? 0 : 1
+
   alarm_name          = "${var.name_prefix}-rds-free-storage-low"
   alarm_description   = "Database free storage is below ${var.db_free_storage_threshold_bytes} bytes."
   namespace           = "AWS/RDS"
@@ -195,6 +204,27 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
   evaluation_periods  = 1
   threshold           = var.db_free_storage_threshold_bytes
   comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "missing"
+  alarm_actions       = local.actions
+  ok_actions          = local.actions
+}
+
+# Aurora has no fixed volume to fill (storage grows to 128 TiB on its own), so FreeStorageSpace
+# does not apply. The useful capacity signal is ACUUtilization: sustained use near the configured
+# maximum means the database is capped and queries are being starved. It reports 0 while paused.
+resource "aws_cloudwatch_metric_alarm" "aurora_acu_utilization" {
+  count = local.aurora_enabled ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-aurora-acu-high"
+  alarm_description   = "Aurora Serverless v2 capacity is above ${var.aurora_acu_utilization_threshold_percent}% of its maximum ACUs for 10 minutes: raise aurora_max_acu."
+  namespace           = "AWS/RDS"
+  metric_name         = "ACUUtilization"
+  dimensions          = { DBClusterIdentifier = var.db_cluster_identifier }
+  statistic           = "Average"
+  period              = 300
+  evaluation_periods  = 2
+  threshold           = var.aurora_acu_utilization_threshold_percent
+  comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "missing"
   alarm_actions       = local.actions
   ok_actions          = local.actions

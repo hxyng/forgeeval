@@ -1,3 +1,7 @@
+locals {
+  aurora = var.database_engine == "aurora-serverless"
+}
+
 module "network" {
   source = "../../modules/network"
 
@@ -9,19 +13,29 @@ module "network" {
 module "data" {
   source = "../../modules/data"
 
-  name_prefix            = var.name_prefix
-  private_subnet_ids     = module.network.private_subnet_ids
-  rds_security_group_id  = module.network.rds_security_group_id
-  db_instance_class      = var.db_instance_class
-  db_allocated_storage   = var.db_allocated_storage
-  multi_az               = var.multi_az
-  deletion_protection    = var.deletion_protection
-  payload_retention_days = var.payload_retention_days
-  payload_force_destroy  = var.teardown_force_delete
+  name_prefix               = var.name_prefix
+  private_subnet_ids        = module.network.private_subnet_ids
+  rds_security_group_id     = module.network.rds_security_group_id
+  db_instance_class         = var.db_instance_class
+  db_allocated_storage      = var.db_allocated_storage
+  multi_az                  = var.multi_az
+  deletion_protection       = var.deletion_protection
+  database_engine           = var.database_engine
+  aurora_max_acu            = var.aurora_max_acu
+  aurora_auto_pause_seconds = var.aurora_auto_pause_seconds
+  payload_retention_days    = var.payload_retention_days
+  payload_force_destroy     = var.teardown_force_delete
+}
+
+# Demo mode: the load balancer (the main hourly cost besides compute) exists only while active.
+moved {
+  from = module.alb
+  to   = module.alb[0]
 }
 
 module "alb" {
   source = "../../modules/alb"
+  count  = var.active ? 1 : 0
 
   name_prefix         = var.name_prefix
   vpc_id              = module.network.vpc_id
@@ -40,10 +54,14 @@ module "compute" {
   task_subnet_ids         = module.network.task_subnet_ids
   assign_public_ip        = module.network.assign_public_ip
   tasks_security_group_id = module.network.tasks_security_group_id
-  api_target_group_arn    = module.alb.api_target_group_arn
-  web_target_group_arn    = module.alb.web_target_group_arn
-  alb_dns_name            = module.alb.dns_name
-  alb_listener_arns       = module.alb.listener_arns
+  services_enabled        = var.active
+  api_target_group_arn    = one(module.alb[*].api_target_group_arn)
+  web_target_group_arn    = one(module.alb[*].web_target_group_arn)
+  alb_listener_arns       = flatten(module.alb[*].listener_arns)
+
+  # Aurora can take ~15 s to resume (30 s or more after a day paused): let new tasks wait for it.
+  api_health_check_grace_period_seconds = local.aurora ? 180 : 90
+  web_health_check_grace_period_seconds = local.aurora ? 120 : 60
 
   queue_url                 = module.data.queue_url
   queue_arn                 = module.data.queue_arn
@@ -72,7 +90,10 @@ module "observability" {
   alarm_email                 = var.alarm_email
   queue_name                  = module.data.queue_name
   dlq_name                    = module.data.dlq_name
-  alb_arn_suffix              = module.alb.arn_suffix
-  api_target_group_arn_suffix = module.alb.api_target_group_arn_suffix
+  alb_enabled                 = var.active
+  alb_arn_suffix              = one(module.alb[*].arn_suffix)
+  api_target_group_arn_suffix = one(module.alb[*].api_target_group_arn_suffix)
+  db_engine                   = var.database_engine
   db_identifier               = module.data.db_identifier
+  db_cluster_identifier       = module.data.db_cluster_identifier
 }

@@ -25,24 +25,46 @@ variable "tasks_security_group_id" {
   type        = string
 }
 
+variable "services_enabled" {
+  description = "Create the api, worker and web services and the worker autoscaling. False puts the environment to sleep: only the cluster, task definitions, ECR and logs remain."
+  type        = bool
+  default     = true
+}
+
 variable "api_target_group_arn" {
-  description = "ALB target group of the API."
+  description = "ALB target group of the API (null while services_enabled is false)."
   type        = string
+  default     = null
 }
 
 variable "web_target_group_arn" {
-  description = "ALB target group of the web tier."
+  description = "ALB target group of the web tier (null while services_enabled is false)."
   type        = string
+  default     = null
 }
 
-variable "alb_dns_name" {
-  description = "DNS name of the load balancer; the web tier's API_UPSTREAM fallback."
+variable "api_upstream" {
+  description = "The web tier's API_UPSTREAM fallback proxy target. The ALB routes /v1/* to the API itself, so this is never used in AWS; it deliberately does not reference the ALB, whose DNS name changes when it is recreated."
   type        = string
+  default     = "http://127.0.0.1:8000"
 }
 
 variable "alb_listener_arns" {
   description = "Listener ARNs. Services wait for them so target groups are attached to a load balancer first."
   type        = list(string)
+  default     = []
+}
+
+variable "api_health_check_grace_period_seconds" {
+  description = "Seconds ECS ignores failing load balancer health checks of a new API task. Must cover task start plus a database resume (about 15 s, 30 s or more after a day paused)."
+  type        = number
+  default     = 90
+}
+
+variable "web_health_check_grace_period_seconds" {
+  description = "Seconds ECS ignores failing load balancer health checks of a new web task."
+  type        = number
+  default     = 60
 }
 
 variable "api_port" {
