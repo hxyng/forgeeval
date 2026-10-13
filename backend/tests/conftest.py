@@ -1,4 +1,8 @@
-"""Tests run against a throwaway `forgeeval_test` database on the compose Postgres."""
+"""Tests run against a throwaway database on the compose Postgres.
+
+TEST_DATABASE_NAME (default `forgeeval_test`) lets several test sessions run at once without
+dropping each other's database.
+"""
 
 import os
 from collections.abc import Callable, Iterator
@@ -18,7 +22,10 @@ if TYPE_CHECKING:
 ADMIN_URL = os.environ.get(
     "TEST_ADMIN_DATABASE_URL", "postgresql+psycopg://forgeeval:forgeeval@localhost:5433/forgeeval"
 )
-TEST_URL = make_url(ADMIN_URL).set(database="forgeeval_test").render_as_string(hide_password=False)
+TEST_DB = os.environ.get("TEST_DATABASE_NAME", "forgeeval_test")
+if not TEST_DB.replace("_", "").isalnum():
+    raise ValueError("TEST_DATABASE_NAME must be letters, digits and underscores")
+TEST_URL = make_url(ADMIN_URL).set(database=TEST_DB).render_as_string(hide_password=False)
 
 # Point app settings at the test database before anything imports forgeeval.db.session.
 os.environ["DATABASE_URL"] = TEST_URL
@@ -55,11 +62,11 @@ def metric_reader() -> InMemoryMetricReader:
 def database_url() -> Iterator[str]:
     admin = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
-        conn.execute(text("DROP DATABASE IF EXISTS forgeeval_test WITH (FORCE)"))
-        conn.execute(text("CREATE DATABASE forgeeval_test"))
+        conn.execute(text(f"DROP DATABASE IF EXISTS {TEST_DB} WITH (FORCE)"))
+        conn.execute(text(f"CREATE DATABASE {TEST_DB}"))
     yield TEST_URL
     with admin.connect() as conn:
-        conn.execute(text("DROP DATABASE IF EXISTS forgeeval_test WITH (FORCE)"))
+        conn.execute(text(f"DROP DATABASE IF EXISTS {TEST_DB} WITH (FORCE)"))
     admin.dispose()
 
 
