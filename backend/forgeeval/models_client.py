@@ -84,8 +84,13 @@ class FakeModels:
             output: Any = {"text": prompt}
         elif name == "oracle":
             output = expected
+        elif name == "judge":
+            score = params.get("judge_score", 4)
+            output = {"text": json.dumps({"score": score, "reason": "fake judge"})}
         else:
-            raise PermanentError(f"unknown fake model {model!r}; use fake/echo or fake/oracle")
+            raise PermanentError(
+                f"unknown fake model {model!r}; use fake/echo, fake/oracle or fake/judge"
+            )
         tokens = len(prompt.split())
         return Generation(
             output=output,
