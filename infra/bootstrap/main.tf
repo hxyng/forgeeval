@@ -21,6 +21,33 @@ locals {
   service_arns    = [for s in ["api", "worker", "web"] : "${local.ecs_arn}:service/${local.cluster}/${var.name_prefix}-${s}"]
   pass_role_arns  = [for r in ["exec", "api-task", "worker-task"] : "${local.arn_prefix}:iam::${local.account_id}:role/${var.name_prefix}-${r}"]
   log_group_arn   = "${local.arn_prefix}:logs:${var.region}:${local.account_id}:log-group:/ecs/${var.name_prefix}"
+
+  # Console on S3 + CloudFront (infra/modules/console): the deploy role may also upload the built
+  # console and invalidate the cache, and nothing else. The bucket name mirrors the module.
+  console_s3         = var.console_hosting == "s3_cloudfront"
+  console_bucket_arn = "${local.arn_prefix}:s3:::${var.name_prefix}-console-${local.account_id}"
+  console_deploy_statements = local.console_s3 ? [
+    {
+      Sid      = "ConsoleBucketList"
+      Effect   = "Allow"
+      Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
+      Resource = local.console_bucket_arn
+    },
+    {
+      Sid      = "ConsoleUpload"
+      Effect   = "Allow"
+      Action   = ["s3:PutObject", "s3:DeleteObject"]
+      Resource = "${local.console_bucket_arn}/*"
+    },
+    {
+      # The distribution ID is only known after the environment is applied (after this stack), so the
+      # permission covers this account's distributions; it grants no other CloudFront action.
+      Sid      = "ConsoleInvalidate"
+      Effect   = "Allow"
+      Action   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]
+      Resource = "${local.arn_prefix}:cloudfront::${local.account_id}:distribution/*"
+    },
+  ] : []
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -233,7 +260,7 @@ resource "aws_iam_role_policy" "deploy" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         # GetAuthorizationToken does not support resource-level permissions.
         Sid      = "EcrLogin"
@@ -302,6 +329,6 @@ resource "aws_iam_role_policy" "deploy" {
         Action   = "elasticloadbalancing:DescribeLoadBalancers"
         Resource = "*"
       },
-    ]
+    ], local.console_deploy_statements)
   })
 }

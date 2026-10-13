@@ -47,7 +47,15 @@ resource "aws_lb_target_group" "api" {
   lifecycle { create_before_destroy = true }
 }
 
+# Without the web tier (console on S3 and CloudFront) there is no web target group.
+moved {
+  from = aws_lb_target_group.web
+  to   = aws_lb_target_group.web[0]
+}
+
 resource "aws_lb_target_group" "web" {
+  count = var.web_enabled ? 1 : 0
+
   name                 = "${var.name_prefix}-web"
   port                 = var.web_port
   protocol             = "HTTP"
@@ -88,11 +96,25 @@ resource "aws_lb_listener" "http" {
   }
 
   dynamic "default_action" {
-    for_each = local.https_enabled ? [] : [1]
+    for_each = local.https_enabled || !var.web_enabled ? [] : [1]
 
     content {
       type             = "forward"
-      target_group_arn = aws_lb_target_group.web.arn
+      target_group_arn = aws_lb_target_group.web[0].arn
+    }
+  }
+
+  dynamic "default_action" {
+    for_each = local.https_enabled || var.web_enabled ? [] : [1]
+
+    content {
+      type = "fixed-response"
+
+      fixed_response {
+        content_type = "text/plain"
+        message_body = "not found"
+        status_code  = "404"
+      }
     }
   }
 }
@@ -106,9 +128,27 @@ resource "aws_lb_listener" "https" {
   ssl_policy        = var.ssl_policy
   certificate_arn   = var.acm_certificate_arn
 
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.web.arn
+  dynamic "default_action" {
+    for_each = var.web_enabled ? [1] : []
+
+    content {
+      type             = "forward"
+      target_group_arn = aws_lb_target_group.web[0].arn
+    }
+  }
+
+  dynamic "default_action" {
+    for_each = var.web_enabled ? [] : [1]
+
+    content {
+      type = "fixed-response"
+
+      fixed_response {
+        content_type = "text/plain"
+        message_body = "not found"
+        status_code  = "404"
+      }
+    }
   }
 }
 

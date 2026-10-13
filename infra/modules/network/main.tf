@@ -1,5 +1,8 @@
 data "aws_availability_zones" "available" {
   state = "available"
+
+  # Fargate ARM64 is unavailable in one us-east-1 zone (use1-az3); the caller excludes it then.
+  exclude_zone_ids = var.exclude_zone_ids
 }
 
 locals {

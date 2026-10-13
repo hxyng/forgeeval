@@ -49,6 +49,21 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/mock/1/2" }
   }
 
+  mock_resource "aws_appautoscaling_policy" {
+    defaults = { arn = "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:mock:resource/ecs/service/t/t-worker:policyName/mock" }
+  }
+
+  mock_resource "aws_cloudfront_distribution" {
+    defaults = {
+      arn         = "arn:aws:cloudfront::123456789012:distribution/E1ABCDEF"
+      domain_name = "d111111abcdef8.cloudfront.net"
+    }
+  }
+
+  mock_resource "aws_cloudfront_function" {
+    defaults = { arn = "arn:aws:cloudfront::123456789012:function/mock" }
+  }
+
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/mock" }
   }
@@ -293,5 +308,239 @@ run "asleep_on_aurora_is_valid_too" {
   assert {
     condition     = length(module.alb) == 0 && length(module.observability.alarm_names) == 4
     error_message = "Both switches combine: Aurora asleep."
+  }
+}
+
+# --- lean always-on options -------------------------------------------------------------------
+
+run "lean_defaults_change_nothing" {
+  assert {
+    condition = (
+      output.cpu_architecture == "X86_64" &&
+      alltrue([for k, a in module.compute.task_runtime_platforms : a == "X86_64"]) &&
+      module.compute.service_capacity_providers == { api = [], web = [], worker = [] } &&
+      module.compute.service_desired_counts == { api = 2, web = 1, worker = 1 } &&
+      module.compute.worker_scaling == { mode = "target-tracking", min = 1, max = 5 } &&
+      module.compute.container_insights == "enabled" &&
+      output.console_hosting == "ecs" &&
+      length(module.console) == 0 &&
+      output.cloudfront_distribution_id == null &&
+      length(module.network.excluded_zone_ids) == 0
+    )
+    error_message = "Without the lean variables the environment is exactly what it was: x86, on-demand, api 2 / web 1 / worker 1, target tracking, Insights on, console on ECS."
+  }
+
+  assert {
+    condition     = module.alb[0].web_target_group_arn != null && output.app_url == "http://forgeeval-prod-alb-1.us-east-1.elb.amazonaws.com"
+    error_message = "Default URL is the load balancer."
+  }
+}
+
+run "arm64_applies_to_every_task_definition_and_skips_the_unsupported_zone" {
+  variables {
+    cpu_architecture = "ARM64"
+  }
+
+  assert {
+    condition     = length(module.compute.task_runtime_platforms) == 4 && alltrue([for k, a in module.compute.task_runtime_platforms : a == "ARM64"])
+    error_message = "api, worker, web and migrate are all ARM64."
+  }
+
+  assert {
+    condition     = module.network.excluded_zone_ids == toset(["use1-az3"])
+    error_message = "Fargate has no ARM64 capacity in use1-az3: the VPC must avoid it."
+  }
+}
+
+run "arm64_outside_us_east_1_excludes_no_zone" {
+  variables {
+    cpu_architecture = "ARM64"
+    region           = "eu-west-1"
+  }
+
+  assert {
+    condition     = length(module.network.excluded_zone_ids) == 0
+    error_message = "The exclusion is specific to us-east-1."
+  }
+}
+
+run "fargate_spot_is_for_the_worker_only" {
+  variables {
+    worker_capacity = "FARGATE_SPOT"
+  }
+
+  assert {
+    condition     = module.compute.service_capacity_providers == { api = [], web = [], worker = ["FARGATE_SPOT"] }
+    error_message = "Only the worker is pinned to FARGATE_SPOT."
+  }
+}
+
+run "worker_can_scale_to_zero" {
+  variables {
+    worker_min_count = 0
+  }
+
+  assert {
+    condition     = module.compute.worker_scaling == { mode = "step", min = 0, max = 5 }
+    error_message = "worker_min_count = 0 uses step scaling on queue backlog with a minimum of 0."
+  }
+}
+
+run "worker_min_above_max_is_rejected" {
+  command = plan
+
+  variables {
+    worker_min_count = 6
+  }
+
+  expect_failures = [var.worker_min_count]
+}
+
+run "api_can_run_a_single_task" {
+  variables {
+    api_desired_count = 1
+  }
+
+  assert {
+    condition     = module.compute.service_desired_counts["api"] == 1
+    error_message = "One API task."
+  }
+}
+
+run "zero_api_tasks_is_rejected" {
+  command = plan
+
+  variables {
+    api_desired_count = 0
+  }
+
+  expect_failures = [var.api_desired_count]
+}
+
+run "container_insights_off" {
+  variables {
+    container_insights = false
+  }
+
+  assert {
+    condition     = module.compute.container_insights == "disabled" && module.compute.worker_scaling.mode == "step" && module.compute.worker_scaling.min == 1
+    error_message = "Insights off: the cluster setting is disabled and worker scaling no longer depends on its metrics."
+  }
+}
+
+run "console_on_s3_and_cloudfront_drops_the_web_tier" {
+  variables {
+    console_hosting = "s3_cloudfront"
+  }
+
+  assert {
+    condition     = output.web_service_name == null && !contains(keys(module.compute.task_runtime_platforms), "web") && !contains(keys(module.compute.service_desired_counts), "web")
+    error_message = "No web service or task definition."
+  }
+
+  assert {
+    condition     = module.alb[0].web_target_group_arn == null
+    error_message = "No web target group."
+  }
+
+  assert {
+    condition     = length(module.console) == 1 && output.console_bucket_name != null && output.cloudfront_distribution_id != null && startswith(output.app_url, "https://")
+    error_message = "The bucket and distribution exist and the application URL is the HTTPS CloudFront domain."
+  }
+
+  assert {
+    condition     = output.console_api_origin == "forgeeval-prod-alb-1.us-east-1.elb.amazonaws.com"
+    error_message = "CloudFront sends /v1/* to the load balancer."
+  }
+
+  assert {
+    condition     = output.api_service_name != null && output.worker_service_name != null
+    error_message = "api and worker are unaffected."
+  }
+}
+
+run "console_on_cloudfront_cannot_be_combined_with_an_alb_certificate" {
+  command = plan
+
+  variables {
+    console_hosting     = "s3_cloudfront"
+    acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/abc"
+  }
+
+  expect_failures = [var.console_hosting]
+}
+
+run "invalid_console_hosting_is_rejected" {
+  command = plan
+
+  variables {
+    console_hosting = "cdn"
+  }
+
+  expect_failures = [var.console_hosting]
+}
+
+run "invalid_worker_capacity_is_rejected" {
+  command = plan
+
+  variables {
+    worker_capacity = "EC2"
+  }
+
+  expect_failures = [var.worker_capacity]
+}
+
+# --- lean options with demo mode ---------------------------------------------------------------
+
+run "awake_lean_reference" {
+  variables {
+    console_hosting    = "s3_cloudfront"
+    cpu_architecture   = "ARM64"
+    worker_capacity    = "FARGATE_SPOT"
+    worker_min_count   = 0
+    api_desired_count  = 1
+    container_insights = false
+  }
+
+  assert {
+    condition     = module.compute.service_desired_counts["api"] == 1 && !contains(keys(module.compute.service_desired_counts), "web") && module.compute.worker_scaling.min == 0 && length(module.console) == 1
+    error_message = "Lean awake: api 1, worker 0, no web, console on CloudFront."
+  }
+}
+
+run "asleep_with_the_console_on_cloudfront_keeps_the_bucket_and_distribution" {
+  variables {
+    active             = false
+    console_hosting    = "s3_cloudfront"
+    cpu_architecture   = "ARM64"
+    worker_capacity    = "FARGATE_SPOT"
+    worker_min_count   = 0
+    api_desired_count  = 1
+    container_insights = false
+  }
+
+  assert {
+    condition     = length(module.alb) == 0 && output.alb_dns_name == null
+    error_message = "Asleep: no load balancer, even with the lean options."
+  }
+
+  assert {
+    condition     = output.api_service_name == null && output.worker_service_name == null && output.web_service_name == null && module.compute.service_desired_counts == {} && module.compute.worker_scaling == null
+    error_message = "Asleep: no ECS services and no worker autoscaling."
+  }
+
+  assert {
+    condition     = length(module.console) == 1 && output.console_bucket_name != null && output.cloudfront_distribution_id != null
+    error_message = "The bucket and the distribution persist while asleep."
+  }
+
+  assert {
+    condition     = output.console_api_origin == "asleep.invalid" && output.app_url != null
+    error_message = "The console URL keeps working; the API origin points at a name that does not resolve."
+  }
+
+  assert {
+    condition     = output.persistent_state == run.awake_lean_reference.persistent_state
+    error_message = "Everything that survives sleep, including the console bucket and distribution, is identical awake and asleep."
   }
 }

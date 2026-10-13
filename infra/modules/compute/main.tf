@@ -1,8 +1,17 @@
 locals {
-  services = toset(["api", "worker", "web", "migrate"])
+  # The web tier (nginx image, service, task definition, log group) exists only when the console is
+  # served from ECS; with console_hosting = "s3_cloudfront" it is static files on S3.
+  services = toset([for s in ["api", "worker", "web", "migrate"] : s if var.web_enabled || s != "web"])
 
   # Long-running services that exist only while the environment is awake (demo mode).
-  running_services = var.services_enabled ? toset(["api", "worker", "web"]) : toset([])
+  running_services = var.services_enabled ? toset([for s in ["api", "worker", "web"] : s if var.web_enabled || s != "web"]) : toset([])
+
+  worker_spot = var.worker_capacity == "FARGATE_SPOT"
+
+  # Target tracking divides queue backlog by the running worker count, which only Container Insights
+  # publishes (ECS/ContainerInsights RunningTaskCount) and which has no datapoints at 0 tasks. So
+  # scale-to-zero and Insights-off both use step scaling driven by SQS metrics alone.
+  step_scaling = var.worker_min == 0 || !var.container_insights
 
   backend_image = "${aws_ecr_repository.this["backend"].repository_url}:${var.image_tag}"
   web_image     = "${aws_ecr_repository.this["web"].repository_url}:${var.image_tag}"
@@ -78,7 +87,7 @@ locals {
     ]
   }
 
-  task_definitions = {
+  all_task_definitions = {
     api = {
       cpu           = var.api_cpu
       memory        = var.api_memory
@@ -162,6 +171,10 @@ locals {
   }
 }
 
+locals {
+  task_definitions = { for k, v in local.all_task_definitions : k => v if var.web_enabled || k != "web" }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Logs and cluster
 # ---------------------------------------------------------------------------------------------
@@ -183,8 +196,17 @@ resource "aws_ecs_cluster" "this" {
 
   setting {
     name  = "containerInsights"
-    value = "enabled"
+    value = var.container_insights ? "enabled" : "disabled"
   }
+}
+
+# Fargate Spot is a capacity provider that must be associated with the cluster before a service can
+# use it. Only the worker service references it.
+resource "aws_ecs_cluster_capacity_providers" "this" {
+  count = local.worker_spot ? 1 : 0
+
+  cluster_name       = aws_ecs_cluster.this.name
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -206,7 +228,7 @@ resource "aws_ecs_task_definition" "this" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "X86_64"
+    cpu_architecture        = var.cpu_architecture
   }
 
   container_definitions = jsonencode([
@@ -318,7 +340,7 @@ resource "aws_ecs_service" "api" {
 }
 
 resource "aws_ecs_service" "web" {
-  count = var.services_enabled ? 1 : 0
+  count = var.services_enabled && var.web_enabled ? 1 : 0
 
   name                               = "${var.name_prefix}-web"
   cluster                            = aws_ecs_cluster.this.id
@@ -362,7 +384,7 @@ resource "aws_ecs_service" "worker" {
   cluster                            = aws_ecs_cluster.this.id
   task_definition                    = data.aws_ecs_task_definition.latest["worker"].arn
   desired_count                      = var.worker_min
-  launch_type                        = "FARGATE"
+  launch_type                        = local.worker_spot ? null : "FARGATE"
   enable_execute_command             = var.enable_ecs_exec
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
@@ -379,10 +401,25 @@ resource "aws_ecs_service" "worker" {
     assign_public_ip = var.assign_public_ip
   }
 
+  # Spot interrupts with a two-minute warning (SIGTERM, then SIGKILL after stopTimeout = 120 s). The
+  # worker finishes or abandons the job on SIGTERM and SQS redelivers an unacknowledged message after
+  # the 120 s visibility timeout (docs/adr/0001-job-queue.md). Fargate never falls back to on-demand.
+  dynamic "capacity_provider_strategy" {
+    for_each = local.worker_spot ? [1] : []
+
+    content {
+      capacity_provider = "FARGATE_SPOT"
+      weight            = 1
+      base              = 0
+    }
+  }
+
   lifecycle {
     # Application Auto Scaling owns the count; the deploy workflow owns the task definition.
     ignore_changes = [task_definition, desired_count]
   }
+
+  depends_on = [aws_ecs_cluster_capacity_providers.this]
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -400,7 +437,7 @@ resource "aws_appautoscaling_target" "worker" {
 }
 
 resource "aws_appautoscaling_policy" "worker_backlog" {
-  count = var.services_enabled ? 1 : 0
+  count = var.services_enabled && !local.step_scaling ? 1 : 0
 
   name               = "${var.name_prefix}-worker-backlog"
   policy_type        = "TargetTrackingScaling"

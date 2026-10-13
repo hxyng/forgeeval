@@ -14,7 +14,7 @@ override_resource {
 }
 
 override_resource {
-  target = aws_lb_target_group.web
+  target = aws_lb_target_group.web[0]
   values = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/t-web/2222222222222222" }
 }
 
@@ -52,7 +52,7 @@ run "http_only_without_a_certificate" {
   }
 
   assert {
-    condition     = one(aws_lb_target_group.api.health_check).path == "/readyz" && one(aws_lb_target_group.web.health_check).path == "/healthz"
+    condition     = one(aws_lb_target_group.api.health_check).path == "/readyz" && one(aws_lb_target_group.web[0].health_check).path == "/healthz"
     error_message = "Health checks: /readyz for the API, /healthz for the web tier."
   }
 }
@@ -80,5 +80,43 @@ run "https_redirects_http" {
   assert {
     condition     = aws_lb_listener_rule.api.listener_arn == aws_lb_listener.https[0].arn
     error_message = "Path rules attach to the HTTPS listener."
+  }
+}
+
+run "console_on_cloudfront_has_no_web_target_group" {
+  variables {
+    web_enabled = false
+  }
+
+  assert {
+    condition     = length(aws_lb_target_group.web) == 0 && output.web_target_group_arn == null
+    error_message = "No web target group when the console is served from S3."
+  }
+
+  assert {
+    condition     = one(aws_lb_listener.http.default_action).type == "fixed-response" && one(one(aws_lb_listener.http.default_action).fixed_response).status_code == "404"
+    error_message = "Unmatched paths get a 404 instead of a forward to a web tier that does not exist."
+  }
+
+  assert {
+    condition     = one(aws_lb_listener_rule.api.condition).path_pattern[0].values == toset(["/v1/*", "/docs", "/openapi.json", "/healthz", "/readyz"])
+    error_message = "API routing is unchanged."
+  }
+}
+
+run "console_on_cloudfront_with_https_keeps_a_404_default" {
+  variables {
+    web_enabled         = false
+    acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/abc"
+  }
+
+  override_resource {
+    target = aws_lb_listener.https[0]
+    values = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/t-alb/50dc6c495c0c9188/bbbbbbbbbbbbbbbb" }
+  }
+
+  assert {
+    condition     = one(aws_lb_listener.https[0].default_action).type == "fixed-response" && one(aws_lb_listener.http.default_action).type == "redirect"
+    error_message = "HTTPS default is a 404; HTTP still redirects."
   }
 }

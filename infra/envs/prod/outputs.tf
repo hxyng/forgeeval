@@ -84,5 +84,41 @@ output "persistent_state" {
     secrets          = [module.data.api_key_pepper_secret_arn, module.data.model_api_key_secret_arn]
     ecr              = module.compute.ecr_repository_urls
     roles            = [module.compute.execution_role_arn, module.compute.task_role_arns]
+    console          = [one(module.console[*].bucket_arn), one(module.console[*].distribution_arn)]
   }
+}
+
+output "console_hosting" {
+  description = "Where the console is served from (ecs or s3_cloudfront)."
+  value       = var.console_hosting
+}
+
+output "cpu_architecture" {
+  description = "CPU architecture of the task definitions."
+  value       = var.cpu_architecture
+}
+
+output "console_bucket_name" {
+  description = "Console bucket (s3_cloudfront only; null otherwise). The deploy workflow derives the same name."
+  value       = one(module.console[*].bucket_name)
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID: set it as the repository variable CLOUDFRONT_DISTRIBUTION_ID (s3_cloudfront only; null otherwise)."
+  value       = one(module.console[*].distribution_id)
+}
+
+output "app_url" {
+  description = "Application URL: the CloudFront domain with s3_cloudfront, else the load balancer (null while asleep)."
+  value       = local.console_s3 ? "https://${one(module.console[*].domain_name)}" : (length(module.alb) == 0 ? null : "http://${one(module.alb[*].dns_name)}")
+}
+
+output "excluded_zone_ids" {
+  description = "Availability zone IDs the VPC avoids (use1-az3 with ARM64 in us-east-1)."
+  value       = module.network.excluded_zone_ids
+}
+
+output "console_api_origin" {
+  description = "Domain CloudFront sends API requests to (s3_cloudfront only; a non-resolving name while asleep)."
+  value       = one(module.console[*].api_origin_domain)
 }

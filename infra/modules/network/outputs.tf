@@ -37,3 +37,8 @@ output "rds_security_group_id" {
   description = "Security group of the database."
   value       = aws_security_group.rds.id
 }
+
+output "excluded_zone_ids" {
+  description = "Availability zone IDs the VPC avoids."
+  value       = data.aws_availability_zones.available.exclude_zone_ids
+}

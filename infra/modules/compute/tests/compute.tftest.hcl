@@ -1,4 +1,8 @@
 mock_provider "aws" {
+  mock_resource "aws_appautoscaling_policy" {
+    defaults = { arn = "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:mock:resource/ecs/service/t/t-worker:policyName/mock" }
+  }
+
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/mock" }
   }
@@ -362,5 +366,197 @@ run "task_definitions_do_not_depend_on_services_enabled" {
   assert {
     condition     = output.task_definition_fingerprints == run.awake_reference.task_definition_fingerprints
     error_message = "Task definition content is identical awake and asleep."
+  }
+}
+
+# --- lean always-on options -------------------------------------------------------------------
+
+run "defaults_are_x86_on_demand_with_target_tracking" {
+  assert {
+    condition     = alltrue([for k, t in aws_ecs_task_definition.this : one(t.runtime_platform).cpu_architecture == "X86_64"])
+    error_message = "Default architecture is X86_64 on every task definition."
+  }
+
+  assert {
+    condition     = length(aws_ecs_cluster_capacity_providers.this) == 0 && length(aws_ecs_service.worker[0].capacity_provider_strategy) == 0 && aws_ecs_service.worker[0].launch_type == "FARGATE"
+    error_message = "Default worker runs on on-demand Fargate with no capacity provider strategy."
+  }
+
+  assert {
+    condition     = length(aws_appautoscaling_policy.worker_backlog) == 1 && length(aws_appautoscaling_policy.worker_scale_out) == 0 && length(aws_cloudwatch_metric_alarm.worker_backlog) == 0
+    error_message = "Default scaling is the unchanged target-tracking policy."
+  }
+
+  assert {
+    condition     = toset(keys(aws_ecs_task_definition.this)) == toset(["api", "worker", "web", "migrate"])
+    error_message = "Default has all four task definitions."
+  }
+}
+
+run "arm64_sets_the_runtime_platform_on_every_task_definition" {
+  variables {
+    cpu_architecture = "ARM64"
+  }
+
+  assert {
+    condition     = length(aws_ecs_task_definition.this) == 4 && alltrue([for k, t in aws_ecs_task_definition.this : one(t.runtime_platform).cpu_architecture == "ARM64" && one(t.runtime_platform).operating_system_family == "LINUX"])
+    error_message = "api, worker, web and migrate must all be ARM64 Linux."
+  }
+}
+
+run "invalid_architecture_is_rejected" {
+  command = plan
+
+  variables {
+    cpu_architecture = "RISCV"
+  }
+
+  expect_failures = [var.cpu_architecture]
+}
+
+run "fargate_spot_applies_to_the_worker_only" {
+  variables {
+    worker_capacity = "FARGATE_SPOT"
+  }
+
+  assert {
+    condition     = [for c in aws_ecs_service.worker[0].capacity_provider_strategy : c.capacity_provider] == ["FARGATE_SPOT"] && one(aws_ecs_service.worker[0].capacity_provider_strategy).weight == 1
+    error_message = "The worker uses the FARGATE_SPOT capacity provider."
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.api[0].capacity_provider_strategy) == 0 && length(aws_ecs_service.web[0].capacity_provider_strategy) == 0 && aws_ecs_service.api[0].launch_type == "FARGATE" && aws_ecs_service.web[0].launch_type == "FARGATE"
+    error_message = "api and web stay on on-demand Fargate."
+  }
+
+  assert {
+    condition     = length(aws_ecs_cluster_capacity_providers.this) == 1 && toset(aws_ecs_cluster_capacity_providers.this[0].capacity_providers) == toset(["FARGATE", "FARGATE_SPOT"])
+    error_message = "Spot must be associated with the cluster first."
+  }
+
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.this["worker"].container_definitions)[0].stopTimeout <= 120
+    error_message = "Spot gives two minutes: stopTimeout must not exceed 120 s."
+  }
+}
+
+run "arm64_and_spot_compose" {
+  variables {
+    cpu_architecture = "ARM64"
+    worker_capacity  = "FARGATE_SPOT"
+  }
+
+  assert {
+    condition     = one(aws_ecs_task_definition.this["worker"].runtime_platform).cpu_architecture == "ARM64" && [for c in aws_ecs_service.worker[0].capacity_provider_strategy : c.capacity_provider] == ["FARGATE_SPOT"]
+    error_message = "ARM64 on Fargate Spot is a supported combination."
+  }
+}
+
+run "worker_min_zero_scales_out_from_zero_with_step_scaling" {
+  variables {
+    worker_min = 0
+  }
+
+  assert {
+    condition     = aws_appautoscaling_target.worker[0].min_capacity == 0 && aws_appautoscaling_target.worker[0].max_capacity == 5
+    error_message = "The worker may scale between 0 and worker_max."
+  }
+
+
+  assert {
+    condition     = length(aws_appautoscaling_policy.worker_backlog) == 0
+    error_message = "Target tracking needs the running task count, which does not exist at 0 tasks."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.worker_backlog[0].metric_name == "ApproximateNumberOfMessagesVisible" &&
+      aws_cloudwatch_metric_alarm.worker_backlog[0].namespace == "AWS/SQS" &&
+      aws_cloudwatch_metric_alarm.worker_backlog[0].threshold == 1 &&
+      aws_cloudwatch_metric_alarm.worker_backlog[0].comparison_operator == "GreaterThanOrEqualToThreshold" &&
+      aws_cloudwatch_metric_alarm.worker_backlog[0].dimensions["QueueName"] == "t-eval-jobs" &&
+      aws_cloudwatch_metric_alarm.worker_backlog[0].treat_missing_data == "notBreaching" &&
+      contains(aws_cloudwatch_metric_alarm.worker_backlog[0].alarm_actions, aws_appautoscaling_policy.worker_scale_out[0].arn)
+    )
+    error_message = "One visible message on the queue is enough to start a worker, and the alarm drives the scale-out policy."
+  }
+
+  assert {
+    condition = (
+      aws_appautoscaling_policy.worker_scale_out[0].policy_type == "StepScaling" &&
+      one(aws_appautoscaling_policy.worker_scale_out[0].step_scaling_policy_configuration).adjustment_type == "ChangeInCapacity" &&
+      toset([for s in one(aws_appautoscaling_policy.worker_scale_out[0].step_scaling_policy_configuration).step_adjustment : s.scaling_adjustment]) == toset([1, 2, 4])
+    )
+    error_message = "Scale-out adds 1, 2 or 4 workers by backlog size and never removes any."
+  }
+
+  assert {
+    condition = (
+      one(aws_appautoscaling_policy.worker_scale_in[0].step_scaling_policy_configuration).adjustment_type == "ExactCapacity" &&
+      one(one(aws_appautoscaling_policy.worker_scale_in[0].step_scaling_policy_configuration).step_adjustment).scaling_adjustment == 0 &&
+      aws_cloudwatch_metric_alarm.worker_idle[0].evaluation_periods == 10 &&
+      aws_cloudwatch_metric_alarm.worker_idle[0].comparison_operator == "LessThanThreshold" &&
+      contains(aws_cloudwatch_metric_alarm.worker_idle[0].alarm_actions, aws_appautoscaling_policy.worker_scale_in[0].arn)
+    )
+    error_message = "Back to zero only after ten idle minutes."
+  }
+
+  assert {
+    condition     = toset(flatten([for q in aws_cloudwatch_metric_alarm.worker_idle[0].metric_query : [for m in q.metric : m.metric_name]])) == toset(["ApproximateNumberOfMessagesVisible", "ApproximateNumberOfMessagesNotVisible"])
+    error_message = "Idle means nothing visible and nothing in flight, so a busy worker is never scaled in."
+  }
+}
+
+run "container_insights_off_switches_to_step_scaling" {
+  variables {
+    container_insights = false
+  }
+
+  assert {
+    condition     = one(aws_ecs_cluster.this.setting).name == "containerInsights" && one(aws_ecs_cluster.this.setting).value == "disabled"
+    error_message = "Container Insights is disabled on the cluster."
+  }
+
+  assert {
+    condition     = length(aws_appautoscaling_policy.worker_backlog) == 0 && length(aws_appautoscaling_policy.worker_scale_out) == 1 && aws_appautoscaling_target.worker[0].min_capacity == 1
+    error_message = "The target-tracking policy reads an Insights metric, so it must not exist; the worker keeps its minimum of 1."
+  }
+
+  assert {
+    condition     = one(one(aws_appautoscaling_policy.worker_scale_in[0].step_scaling_policy_configuration).step_adjustment).scaling_adjustment == 1
+    error_message = "Scale-in returns to worker_min."
+  }
+}
+
+run "api_desired_count_one" {
+  variables {
+    api_desired_count = 1
+  }
+
+  assert {
+    condition     = aws_ecs_service.api[0].desired_count == 1 && aws_ecs_service.web[0].desired_count == 1 && aws_ecs_service.worker[0].desired_count == 1
+    error_message = "A single API task."
+  }
+}
+
+run "console_on_s3_removes_the_web_tier" {
+  variables {
+    web_enabled          = false
+    web_target_group_arn = null
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.web) == 0 && output.web_service_name == null && output.api_service_name != null && output.worker_service_name != null
+    error_message = "No web service."
+  }
+
+  assert {
+    condition     = toset(keys(aws_ecs_task_definition.this)) == toset(["api", "worker", "migrate"]) && toset(keys(aws_cloudwatch_log_group.service)) == toset(["api", "worker", "migrate"])
+    error_message = "No web task definition or log group either."
+  }
+
+  assert {
+    condition     = toset(keys(output.service_latest_task_definition_arns)) == toset(["api", "worker"])
+    error_message = "Only api and worker are created from the latest revision."
   }
 }

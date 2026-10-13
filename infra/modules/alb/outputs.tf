@@ -24,8 +24,8 @@ output "api_target_group_arn_suffix" {
 }
 
 output "web_target_group_arn" {
-  description = "Target group of the web tier."
-  value       = aws_lb_target_group.web.arn
+  description = "Target group of the web tier (null when the console is served from S3 and CloudFront)."
+  value       = one(aws_lb_target_group.web[*].arn)
 }
 
 output "https_enabled" {

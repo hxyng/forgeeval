@@ -40,6 +40,7 @@ rds_hour=0.016
 aurora_acu_hour=0.12
 awake_aurora_acu=1 # assumption: average ACUs while awake (the maximum is aurora_max_acu, default 2)
 
+# Estimates use x86 on-demand prices: they overstate ARM64 (about 20% less) and Fargate Spot workers.
 # Task sizes are the module defaults (api/worker 0.25 vCPU + 1 GB, web 0.25 vCPU + 0.5 GB).
 task_cost() { # vcpu gb count
   awk -v v="$1" -v g="$2" -v n="$3" -v vc="$vcpu_hour" -v gc="$gb_hour" 'BEGIN { printf "%.5f", n * (v * vc + g * gc) }'
@@ -63,7 +64,10 @@ wait_until_ready() {
   fi
 
   echo "Waiting for ECS services to become stable (tasks start, database resumes)..."
-  aws ecs wait services-stable --cluster "$cluster" --services "$api" "$worker" "$web"
+  # With console_hosting = s3_cloudfront there is no web service (its output is null, so empty here).
+  local services=("$api" "$worker")
+  if [ -n "$web" ]; then services+=("$web"); fi
+  aws ecs wait services-stable --cluster "$cluster" --services "${services[@]}"
 
   # The first request after an Aurora pause waits for the database to resume (about 15 s, 30 s or
   # more after a day), so allow generous retries.
@@ -72,6 +76,11 @@ wait_until_ready() {
     --max-time 20 "http://${dns}/readyz"
   echo
   echo "Awake: http://${dns}"
+  local app_url
+  app_url=$(tf_out app_url)
+  case "$app_url" in
+    https://*) echo "Console and API through CloudFront: ${app_url} (the API origin was updated to the new load balancer; CloudFront may need a few minutes to propagate it)" ;;
+  esac
 }
 
 status() {
@@ -99,7 +108,8 @@ status() {
   local api_n worker_n web_n
   api_n=$(running_count "$cluster" "$api")
   worker_n=$(running_count "$cluster" "$worker")
-  web_n=$(running_count "$cluster" "$web")
+  web_n=0
+  if [ -n "$web" ]; then web_n=$(running_count "$cluster" "$web"); fi
 
   echo "State: AWAKE (load balancer ${dns})"
   echo "Database engine: ${engine}"
